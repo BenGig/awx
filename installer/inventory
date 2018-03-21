@@ -1,4 +1,7 @@
-localhost ansible_connection=local ansible_python_interpreter="/usr/bin/env python"
+[tower]
+awxtst-node-1.ethz.ch
+awxtst-node-2.ethz.ch
+awxtst-node-3.ethz.ch
 
 [all:vars]
 
@@ -9,6 +12,14 @@ localhost ansible_connection=local ansible_python_interpreter="/usr/bin/env pyth
 dockerhub_base=ansible
 dockerhub_version=latest
 rabbitmq_version=3.6.14
+
+
+rabbitmq_port=5672
+rabbitmq_vhost=tower
+rabbitmq_username=tower
+rabbitmq_cookie=rabbitmq80442cookie
+rabbitmq_password=359da3ksf99g4saa13228
+rabbitmq_use_long_name=true
 
 # Openshift Install
 # Will need to set -e openshift_password=developer -e docker_registry_password=$(oc whoami -t)
@@ -60,9 +71,10 @@ docker_compose_dir=/var/lib/awx
 # Set pg_hostname if you have an external postgres server, otherwise
 # a new postgres service will be created
 # pg_hostname=postgresql
+pg_host='postgres.ethz.ch'
 pg_username=awx
 pg_password=awxpass
-pg_database=awx
+pg_database=awx-tst
 pg_port=5432
 
 # Use a local distribution build container image for building the AWX package
@@ -80,11 +92,12 @@ pg_port=5432
 # then these default values are used
 # default_admin_user=admin
 # default_admin_password=password
+admin_password=password 
 
 # AWX Secret key
 # It's *very* important that this stay the same between upgrades or you will lose the ability to decrypt
 # your credentials
-awx_secret_key=awxsecret
+awx_secret_key=awxmegasupersecret5643
 
 # Build AWX with official logos
 # Requires cloning awx-logos repo into the project root.
@@ -92,9 +105,9 @@ awx_secret_key=awxsecret
 # awx_official=false
 
 # Proxy
-#http_proxy=http://proxy:3128
-#https_proxy=http://proxy:3128
-#no_proxy=mycorp.org
+http_proxy=http://proxy-bd.ethz.ch:3128
+https_proxy=http://proxy-bd.ethz.ch:3128
+no_proxy=ethz.ch
 
 # Container networking configuration
 # Set the awx_task and awx_web containers' search domain(s)
