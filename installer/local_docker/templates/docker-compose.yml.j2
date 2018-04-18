@@ -10,8 +10,8 @@ services:
       {% if pg_hostname is not defined %}
       - postgres
       {% endif %}
-    ports:
-      - "{{ host_port }}:8052"
+    expose:
+      - 8052"
     hostname: awxweb
     user: root
     restart: unless-stopped
