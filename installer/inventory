@@ -1,7 +1,8 @@
+# localhost ansible_connection=local ansible_python_interpreter="/usr/bin/env python"
 [tower]
-awxtst-node-1.ethz.ch
-awxtst-node-2.ethz.ch
-awxtst-node-3.ethz.ch
+cattle01
+cattle02
+cattle03
 
 [all:vars]
 
@@ -17,8 +18,8 @@ rabbitmq_version=3.6.14
 rabbitmq_port=5672
 rabbitmq_vhost=tower
 rabbitmq_username=tower
-rabbitmq_cookie=rabbitmq80442cookie
-rabbitmq_password=359da3ksf99g4saa13228
+rabbitmq_cookie=__rabbitmqcookie__
+rabbitmq_password=__rabbitmqpw__
 rabbitmq_use_long_name=true
 
 # Openshift Install
@@ -29,7 +30,7 @@ rabbitmq_use_long_name=true
 # awx_node_port=30083
 
 # Kubernetes Install
-# kubernetes_context=test-cluster
+# kubernetes_context=cluster-hsnbj
 # awx_kubernetes_namespace=awx
 
 # Kubernetes and Openshift Install Resource Requests
@@ -71,10 +72,10 @@ docker_compose_dir=/var/lib/awx
 # Set pg_hostname if you have an external postgres server, otherwise
 # a new postgres service will be created
 # pg_hostname=postgresql
-pg_host='postgres.ethz.ch'
+pg_hostname='id-hdb-psgr-ct44.ethz.ch'
 pg_username=awx
-pg_password=awxpass
-pg_database=awx-tst
+pg_password=__dbpw__
+pg_database=dawx
 pg_port=5432
 
 # Use a local distribution build container image for building the AWX package
@@ -97,7 +98,7 @@ admin_password=password
 # AWX Secret key
 # It's *very* important that this stay the same between upgrades or you will lose the ability to decrypt
 # your credentials
-awx_secret_key=awxmegasupersecret5643
+awx_secret_key=__awxsecretkey__
 
 # Build AWX with official logos
 # Requires cloning awx-logos repo into the project root.

@@ -8,6 +8,10 @@ FROM centos:7
 
 USER root
 
+# Reinstalled clients cause ssh key error
+RUN mkdir /root/.ssh
+ADD root_ssh_config /root/.ssh/config
+
 # Init System
 ADD https://github.com/krallin/tini/releases/download/v0.14.0/tini /tini
 RUN chmod +x /tini
