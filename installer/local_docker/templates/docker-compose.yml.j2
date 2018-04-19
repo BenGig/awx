@@ -61,6 +61,7 @@ services:
       MEMCACHED_PORT: 11211
       AWX_ADMIN_USER: {{ default_admin_user|default('admin') }}
       AWX_ADMIN_PASSWORD: {{ default_admin_password|default('password') }}
+      VIRTUAL_HOST: {{ virtual_host_name }}
 
   task:
     image: {{ awx_task_docker_actual_image }}
