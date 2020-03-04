@@ -6,111 +6,38 @@ import pytest
 # AWX
 from awx.api.serializers import JobTemplateSerializer
 from awx.api.versioning import reverse
-from awx.main.models.jobs import Job, JobTemplate
+from awx.main.models import Job, JobTemplate, CredentialType, WorkflowJobTemplate
 from awx.main.migrations import _save_password_keys as save_password_keys
 
 # Django
 from django.conf import settings
 from django.apps import apps
 
+# DRF
+from rest_framework.exceptions import ValidationError
+
 
 @pytest.mark.django_db
 @pytest.mark.parametrize(
-    "grant_project, grant_credential, grant_inventory, expect", [
-        (True, True, True, 201),
-        (True, True, False, 403),
-        (True, False, True, 403),
-        (False, True, True, 403),
+    "grant_project, grant_inventory, expect", [
+        (True, True, 201),
+        (True, False, 403),
+        (False, True, 403),
     ]
 )
-def test_create(post, project, machine_credential, inventory, alice, grant_project, grant_credential, grant_inventory, expect):
+def test_create(post, project, machine_credential, inventory, alice, grant_project, grant_inventory, expect):
     if grant_project:
         project.use_role.members.add(alice)
-    if grant_credential:
-        machine_credential.use_role.members.add(alice)
     if grant_inventory:
         inventory.use_role.members.add(alice)
 
     r = post(reverse('api:job_template_list'), {
         'name': 'Some name',
         'project': project.id,
-        'credential': machine_credential.id,  # TODO: remove in 3.3
         'inventory': inventory.id,
         'playbook': 'helloworld.yml',
     }, alice)
-    if expect == 201:
-        jt = JobTemplate.objects.get(id=r.data['id'])
-        assert set(jt.credentials.values_list('id', flat=True)) == set([machine_credential.id])
     assert r.status_code == expect
-
-
-# TODO: remove in 3.3
-@pytest.mark.django_db
-def test_create_with_v1_deprecated_credentials(get, post, project, machine_credential, credential, net_credential, inventory, alice):
-    project.use_role.members.add(alice)
-    machine_credential.use_role.members.add(alice)
-    credential.use_role.members.add(alice)
-    net_credential.use_role.members.add(alice)
-    inventory.use_role.members.add(alice)
-
-    pk = post(reverse('api:job_template_list', kwargs={'version': 'v1'}), {
-        'name': 'Some name',
-        'project': project.id,
-        'credential': machine_credential.id,
-        'cloud_credential': credential.id,
-        'network_credential': net_credential.id,
-        'inventory': inventory.id,
-        'playbook': 'helloworld.yml',
-    }, alice, expect=201).data['id']
-
-    url = reverse('api:job_template_detail', kwargs={'version': 'v1', 'pk': pk})
-    response = get(url, alice)
-    assert response.data.get('cloud_credential') == credential.pk
-    assert response.data.get('network_credential') == net_credential.pk
-
-
-# TODO: remove in 3.3
-@pytest.mark.django_db
-def test_create_with_empty_v1_deprecated_credentials(get, post, project, machine_credential, inventory, alice):
-    project.use_role.members.add(alice)
-    machine_credential.use_role.members.add(alice)
-    inventory.use_role.members.add(alice)
-
-    pk = post(reverse('api:job_template_list', kwargs={'version': 'v1'}), {
-        'name': 'Some name',
-        'project': project.id,
-        'credential': machine_credential.id,
-        'cloud_credential': None,
-        'network_credential': None,
-        'inventory': inventory.id,
-        'playbook': 'helloworld.yml',
-    }, alice, expect=201).data['id']
-
-    url = reverse('api:job_template_detail', kwargs={'version': 'v1', 'pk': pk})
-    response = get(url, alice)
-    assert response.data.get('cloud_credential') is None
-    assert response.data.get('network_credential') is None
-
-
-# TODO: remove in 3.3
-@pytest.mark.django_db
-def test_create_v1_rbac_check(get, post, project, credential, net_credential, rando):
-    project.use_role.members.add(rando)
-
-    base_kwargs = dict(
-        name = 'Made with cloud/net creds I have no access to',
-        project = project.id,
-        ask_inventory_on_launch = True,
-        ask_credential_on_launch = True,
-        playbook = 'helloworld.yml',
-    )
-
-    base_kwargs['cloud_credential'] = credential.pk
-    post(reverse('api:job_template_list', kwargs={'version': 'v1'}), base_kwargs, rando, expect=403)
-
-    base_kwargs.pop('cloud_credential')
-    base_kwargs['network_credential'] = net_credential.pk
-    post(reverse('api:job_template_list', kwargs={'version': 'v1'}), base_kwargs, rando, expect=403)
 
 
 @pytest.mark.django_db
@@ -119,7 +46,7 @@ def test_extra_credential_creation(get, post, organization_factory, job_template
     jt = job_template_factory("jt", organization=objs.organization,
                               inventory='test_inv', project='test_proj').job_template
 
-    url = reverse('api:job_template_extra_credentials_list', kwargs={'version': 'v2', 'pk': jt.pk})
+    url = reverse('api:job_template_extra_credentials_list', kwargs={'pk': jt.pk})
     response = post(url, {
         'name': 'My Cred',
         'credential_type': credentialtype_aws.pk,
@@ -135,12 +62,33 @@ def test_extra_credential_creation(get, post, organization_factory, job_template
 
 
 @pytest.mark.django_db
+@pytest.mark.parametrize('kind', ['scm', 'insights'])
+def test_invalid_credential_kind_xfail(get, post, organization_factory, job_template_factory, kind):
+    objs = organization_factory("org", superusers=['admin'])
+    jt = job_template_factory("jt", organization=objs.organization,
+                              inventory='test_inv', project='test_proj').job_template
+
+    url = reverse('api:job_template_credentials_list', kwargs={'pk': jt.pk})
+    cred_type = CredentialType.defaults[kind]()
+    cred_type.save()
+    response = post(url, {
+        'name': 'My Cred',
+        'credential_type': cred_type.pk,
+        'inputs': {
+            'username': 'bob',
+            'password': 'secret',
+        }
+    }, objs.superusers.admin, expect=400)
+    assert 'Cannot assign a Credential of kind `{}`.'.format(kind) in response.data.values()
+
+
+@pytest.mark.django_db
 def test_extra_credential_unique_type_xfail(get, post, organization_factory, job_template_factory, credentialtype_aws):
     objs = organization_factory("org", superusers=['admin'])
     jt = job_template_factory("jt", organization=objs.organization,
                               inventory='test_inv', project='test_proj').job_template
 
-    url = reverse('api:job_template_extra_credentials_list', kwargs={'version': 'v2', 'pk': jt.pk})
+    url = reverse('api:job_template_extra_credentials_list', kwargs={'pk': jt.pk})
     response = post(url, {
         'name': 'My Cred',
         'credential_type': credentialtype_aws.pk,
@@ -171,12 +119,28 @@ def test_extra_credential_unique_type_xfail(get, post, organization_factory, job
 
 
 @pytest.mark.django_db
+def test_create_with_forks_exceeding_maximum_xfail(alice, post, project, inventory, settings):
+    project.use_role.members.add(alice)
+    inventory.use_role.members.add(alice)
+    settings.MAX_FORKS = 10
+    response = post(reverse('api:job_template_list'), {
+        'name': 'Some name',
+        'project': project.id,
+        'inventory': inventory.id,
+        'playbook': 'helloworld.yml',
+        'forks': 11,
+    }, alice)
+    assert response.status_code == 400
+    assert 'Maximum number of forks (10) exceeded' in str(response.data)
+
+
+@pytest.mark.django_db
 def test_attach_extra_credential(get, post, organization_factory, job_template_factory, credential):
     objs = organization_factory("org", superusers=['admin'])
     jt = job_template_factory("jt", organization=objs.organization,
                               inventory='test_inv', project='test_proj').job_template
 
-    url = reverse('api:job_template_extra_credentials_list', kwargs={'version': 'v2', 'pk': jt.pk})
+    url = reverse('api:job_template_extra_credentials_list', kwargs={'pk': jt.pk})
     response = post(url, {
         'associate': True,
         'id': credential.id,
@@ -195,7 +159,7 @@ def test_detach_extra_credential(get, post, organization_factory, job_template_f
     jt.credentials.add(credential)
     jt.save()
 
-    url = reverse('api:job_template_extra_credentials_list', kwargs={'version': 'v2', 'pk': jt.pk})
+    url = reverse('api:job_template_extra_credentials_list', kwargs={'pk': jt.pk})
     response = post(url, {
         'disassociate': True,
         'id': credential.id,
@@ -213,7 +177,7 @@ def test_attach_extra_credential_wrong_kind_xfail(get, post, organization_factor
     jt = job_template_factory("jt", organization=objs.organization,
                               inventory='test_inv', project='test_proj').job_template
 
-    url = reverse('api:job_template_extra_credentials_list', kwargs={'version': 'v2', 'pk': jt.pk})
+    url = reverse('api:job_template_extra_credentials_list', kwargs={'pk': jt.pk})
     response = post(url, {
         'associate': True,
         'id': machine_credential.id,
@@ -222,79 +186,6 @@ def test_attach_extra_credential_wrong_kind_xfail(get, post, organization_factor
 
     response = get(url, user=objs.superusers.admin)
     assert response.data.get('count') == 0
-
-
-# TODO: remove in 3.3
-@pytest.mark.django_db
-def test_v1_extra_credentials_detail(get, organization_factory, job_template_factory, credential, net_credential):
-    objs = organization_factory("org", superusers=['admin'])
-    jt = job_template_factory("jt", organization=objs.organization,
-                              inventory='test_inv', project='test_proj').job_template
-    jt.credentials.add(credential)
-    jt.credentials.add(net_credential)
-    jt.save()
-
-    url = reverse('api:job_template_detail', kwargs={'version': 'v1', 'pk': jt.pk})
-    response = get(url, user=objs.superusers.admin)
-    assert response.data.get('cloud_credential') == credential.pk
-    assert response.data.get('network_credential') == net_credential.pk
-
-
-# TODO: remove in 3.3
-@pytest.mark.django_db
-def test_v1_set_extra_credentials_assignment(get, patch, organization_factory, job_template_factory, credential, net_credential):
-    objs = organization_factory("org", superusers=['admin'])
-    jt = job_template_factory("jt", organization=objs.organization,
-                              inventory='test_inv', project='test_proj').job_template
-    jt.save()
-
-    url = reverse('api:job_template_detail', kwargs={'version': 'v1', 'pk': jt.pk})
-    response = patch(url, {
-        'cloud_credential': credential.pk,
-        'network_credential': net_credential.pk
-    }, objs.superusers.admin)
-    assert response.status_code == 200
-
-    url = reverse('api:job_template_detail', kwargs={'version': 'v1', 'pk': jt.pk})
-    response = get(url, user=objs.superusers.admin)
-    assert response.status_code == 200
-    assert response.data.get('cloud_credential') == credential.pk
-    assert response.data.get('network_credential') == net_credential.pk
-
-    url = reverse('api:job_template_detail', kwargs={'version': 'v1', 'pk': jt.pk})
-    response = patch(url, {
-        'cloud_credential': None,
-        'network_credential': None,
-    }, objs.superusers.admin)
-    assert response.status_code == 200
-
-    url = reverse('api:job_template_detail', kwargs={'version': 'v1', 'pk': jt.pk})
-    response = get(url, user=objs.superusers.admin)
-    assert response.status_code == 200
-    assert response.data.get('cloud_credential') is None
-    assert response.data.get('network_credential') is None
-
-
-@pytest.mark.django_db
-def test_filter_by_v1(get, organization_factory, job_template_factory, credential, net_credential):
-    objs = organization_factory("org", superusers=['admin'])
-    jt = job_template_factory("jt", organization=objs.organization,
-                              inventory='test_inv', project='test_proj').job_template
-    jt.credentials.add(credential)
-    jt.credentials.add(net_credential)
-    jt.save()
-
-    for query in (
-        ('cloud_credential', str(credential.pk)),
-        ('network_credential', str(net_credential.pk))
-    ):
-        url = reverse('api:job_template_list', kwargs={'version': 'v1'})
-        response = get(
-            url,
-            user=objs.superusers.admin,
-            QUERY_STRING='='.join(query)
-        )
-        assert response.data.get('count') == 1
 
 
 @pytest.mark.django_db
@@ -451,6 +342,24 @@ def test_launch_with_pending_deletion_inventory(get, post, organization_factory,
 
 
 @pytest.mark.django_db
+def test_launch_with_pending_deletion_inventory_workflow(get, post, organization, inventory, admin_user):
+    wfjt = WorkflowJobTemplate.objects.create(
+        name='wfjt',
+        organization=organization,
+        inventory=inventory
+    )
+
+    inventory.pending_deletion = True
+    inventory.save()
+
+    resp = post(
+        url=reverse('api:workflow_job_template_launch', kwargs={'pk': wfjt.pk}),
+        user=admin_user, expect=400
+    )
+    assert resp.data['inventory'] == ['The inventory associated with this Workflow is being deleted.']
+
+
+@pytest.mark.django_db
 def test_launch_with_extra_credentials(get, post, organization_factory,
                                        job_template_factory, machine_credential,
                                        credential, net_credential):
@@ -502,36 +411,6 @@ def test_launch_with_extra_credentials_not_allowed(get, post, organization_facto
 
 
 @pytest.mark.django_db
-def test_v1_launch_with_extra_credentials(get, post, organization_factory,
-                                          job_template_factory, machine_credential,
-                                          credential, net_credential):
-    # launch requests to `/api/v1/job_templates/N/launch/` should ignore
-    # `extra_credentials`, as they're only supported in v2 of the API.
-    objs = organization_factory("org", superusers=['admin'])
-    jt = job_template_factory("jt", organization=objs.organization,
-                              inventory='test_inv', project='test_proj').job_template
-    jt.ask_credential_on_launch = True
-    jt.save()
-
-    resp = post(
-        reverse('api:job_template_launch', kwargs={'pk': jt.pk, 'version': 'v1'}),
-        dict(
-            credential=machine_credential.pk,
-            extra_credentials=[credential.pk, net_credential.pk]
-        ),
-        objs.superusers.admin, expect=201
-    )
-    job_pk = resp.data.get('id')
-    assert resp.data.get('ignored_fields').keys() == ['extra_credentials']
-
-    resp = get(reverse('api:job_extra_credentials_list', kwargs={'pk': job_pk}), objs.superusers.admin)
-    assert resp.data.get('count') == 0
-
-    resp = get(reverse('api:job_template_extra_credentials_list', kwargs={'pk': jt.pk}), objs.superusers.admin)
-    assert resp.data.get('count') == 0
-
-
-@pytest.mark.django_db
 def test_jt_without_project(inventory):
     data = dict(name="Test", job_type="run",
                 inventory=inventory.pk, project=None)
@@ -577,17 +456,31 @@ def test_save_survey_passwords_on_migration(job_template_with_survey_passwords):
 
 
 @pytest.mark.django_db
-def test_job_template_custom_virtualenv(get, patch, organization_factory, job_template_factory):
+@pytest.mark.parametrize('access', ["superuser", "admin", "peon"])
+def test_job_template_custom_virtualenv(get, patch, organization_factory, job_template_factory, alice, access):
     objs = organization_factory("org", superusers=['admin'])
     jt = job_template_factory("jt", organization=objs.organization,
                               inventory='test_inv', project='test_proj').job_template
 
+    user = alice
+    if access == "superuser":
+        user = objs.superusers.admin
+    elif access == "admin":
+        jt.admin_role.members.add(alice)
+    else:
+        jt.read_role.members.add(alice)
+
     with TemporaryDirectory(dir=settings.BASE_VENV_PATH) as temp_dir:
-        admin = objs.superusers.admin
         os.makedirs(os.path.join(temp_dir, 'bin', 'activate'))
         url = reverse('api:job_template_detail', kwargs={'pk': jt.id})
-        patch(url, {'custom_virtualenv': temp_dir}, user=admin, expect=200)
-        assert get(url, user=admin).data['custom_virtualenv'] == os.path.join(temp_dir, '')
+
+        if access == "peon":
+            patch(url, {'custom_virtualenv': temp_dir}, user=user, expect=403)
+            assert 'custom_virtualenv' not in get(url, user=user)
+            assert JobTemplate.objects.get(pk=jt.id).custom_virtualenv is None
+        else:
+            patch(url, {'custom_virtualenv': temp_dir}, user=user, expect=200)
+            assert get(url, user=user).data['custom_virtualenv'] == os.path.join(temp_dir, '')
 
 
 @pytest.mark.django_db
@@ -615,3 +508,50 @@ def test_job_template_unset_custom_virtualenv(get, patch, organization_factory,
     url = reverse('api:job_template_detail', kwargs={'pk': jt.id})
     resp = patch(url, {'custom_virtualenv': value}, user=objs.superusers.admin, expect=200)
     assert resp.data['custom_virtualenv'] is None
+
+
+@pytest.mark.django_db
+def test_callback_disallowed_null_inventory(project):
+    jt = JobTemplate.objects.create(
+        name='test-jt', inventory=None,
+        ask_inventory_on_launch=True,
+        project=project, playbook='helloworld.yml')
+    serializer = JobTemplateSerializer(jt)
+    assert serializer.instance == jt
+    with pytest.raises(ValidationError) as exc:
+        serializer.validate({'host_config_key': 'asdfbasecfeee'})
+    assert 'Cannot enable provisioning callback without an inventory set' in str(exc)
+
+
+@pytest.mark.django_db
+def test_job_template_branch_error(project, inventory, post, admin_user):
+    r = post(
+        url=reverse('api:job_template_list'),
+        data={
+            "name": "fooo",
+            "inventory": inventory.pk,
+            "project": project.pk,
+            "playbook": "helloworld.yml",
+            "scm_branch": "foobar"
+        },
+        user=admin_user,
+        expect=400
+    )
+    assert 'Project does not allow overriding branch' in str(r.data['scm_branch'])
+
+
+@pytest.mark.django_db
+def test_job_template_branch_prompt_error(project, inventory, post, admin_user):
+    r = post(
+        url=reverse('api:job_template_list'),
+        data={
+            "name": "fooo",
+            "inventory": inventory.pk,
+            "project": project.pk,
+            "playbook": "helloworld.yml",
+            "ask_scm_branch_on_launch": True
+        },
+        user=admin_user,
+        expect=400
+    )
+    assert 'Project does not allow overriding branch' in str(r.data['ask_scm_branch_on_launch'])

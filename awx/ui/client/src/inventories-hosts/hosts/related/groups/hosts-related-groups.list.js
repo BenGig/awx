@@ -15,24 +15,29 @@ export default ['i18n', function(i18n) {
         hover: true,
         trackBy: 'group.id',
         basePath:  'api/v2/hosts/{{$stateParams.host_id}}/groups/',
+        layoutClass: 'List-staticColumnLayout--statusOrCheckbox',
+        staticColumns: [
+            {
+                field: 'failed_hosts',
+                content: {
+                    label: '',
+                    nosort: true,
+                    mode: 'all',
+                    iconOnly: true,
+                    awToolTip: "{{ group.hosts_status_tip }}",
+                    dataPlacement: "top",
+                    icon: "{{ 'fa icon-job-' + group.hosts_status_class }}",
+                    columnClass: 'status-column'
+                }
+            }
+        ],
 
         fields: {
-            failed_hosts: {
-                label: '',
-                nosort: true,
-                mode: 'all',
-                iconOnly: true,
-                awToolTip: "{{ group.hosts_status_tip }}",
-                dataPlacement: "top",
-                icon: "{{ 'fa icon-job-' + group.hosts_status_class }}",
-                columnClass: 'status-column List-staticColumn--smallStatus'
-            },
             name: {
                 label: i18n._('Groups'),
                 key: true,
                 ngClick: "goToGroupGroups(group.id)",
                 columnClass: 'col-lg-6 col-md-6 col-sm-6 col-xs-6',
-                class: 'InventoryManage-breakWord',
             }
         },
 
@@ -49,8 +54,8 @@ export default ['i18n', function(i18n) {
                 mode: 'all',
                 ngClick: "associateGroup()",
                 awToolTip: i18n._("Associate this host with a new group"),
-                actionClass: 'btn List-buttonSubmit',
-                buttonContent: '&#43; ' + i18n._('ASSOCIATE GROUP'),
+                actionClass: 'at-Button--add',
+                actionId: 'button-add',
                 ngShow: 'canAdd',
                 dataPlacement: "top",
             }

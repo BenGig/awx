@@ -1,22 +1,27 @@
 import uuid from 'uuid';
 
-const id = uuid().substr(0, 8);
+const data = {};
 
-const INVENTORY_NAME = `inventory-${id}`;
-const MACHINE_CREDENTIAL_NAME = `credential-machine-${id}`;
-const ORGANIZATION_NAME = `organization-${id}`;
-const PROJECT_NAME = `project-${id}`;
-const PROJECT_URL = 'https://github.com/jlaska/ansible-playbooks';
-const PROJECT_BRANCH = 'master';
-const PLAYBOOK_NAME = 'multivault.yml';
-const TEMPLATE_NAME = `template-${id}`;
-const VAULT_CREDENTIAL_NAME_1 = `credential-vault-${id}-1`;
-const VAULT_CREDENTIAL_NAME_2 = `credential-vault-${id}-2`;
+const initializeData = () => {
+    const id = uuid().substr(0, 8);
+
+    data.INVENTORY_NAME = `inventory-${id}`;
+    data.MACHINE_CREDENTIAL_NAME = `credential-machine-${id}`;
+    data.ORGANIZATION_NAME = `organization-${id}`;
+    data.PROJECT_NAME = `project-${id}`;
+    data.PROJECT_URL = 'https://github.com/ansible/test-playbooks';
+    data.PROJECT_BRANCH = 'master';
+    data.PLAYBOOK_NAME = 'multivault.yml';
+    data.TEMPLATE_NAME = `template-${id}`;
+    data.VAULT_CREDENTIAL_NAME_1 = `credential-vault-${id}-1`;
+    data.VAULT_CREDENTIAL_NAME_2 = `credential-vault-${id}-2`;
+};
 
 module.exports = {
     'login to awx': client => {
+        initializeData();
+
         client.login();
-        client.resizeWindow(1200, 800);
         client.waitForAngular();
     },
     'create organization': client => {
@@ -37,7 +42,7 @@ module.exports = {
         details.waitForElementVisible('@name');
         details.expect.element('@name').enabled;
 
-        details.setValue('@name', ORGANIZATION_NAME);
+        details.setValue('@name', data.ORGANIZATION_NAME);
 
         organizations.waitForElementVisible('@save');
         organizations.expect.element('@save').enabled;
@@ -65,17 +70,17 @@ module.exports = {
         projects.waitForElementVisible('label[for="organization"] + div input');
         projects.waitForElementPresent('label[for="scm_type"] + div > div select option[value="git"]');
 
-        projects.setValue('label[for="name"] + div input', PROJECT_NAME);
+        projects.setValue('label[for="name"] + div input', data.PROJECT_NAME);
         projects.clearValue('label[for="organization"] + div input');
-        projects.setValue('label[for="organization"] + div input', ORGANIZATION_NAME);
+        projects.setValue('label[for="organization"] + div input', data.ORGANIZATION_NAME);
         projects.click('label[for="scm_type"] + div > div select option[value="git"]');
 
         projects.waitForElementVisible('.sourceSubForm');
         projects.waitForElementVisible('label[for="scm_url"] + div input');
         projects.waitForElementVisible('label[for="scm_branch"] + div input');
 
-        projects.setValue('label[for="scm_url"] + div input', PROJECT_URL);
-        projects.setValue('label[for="scm_branch"] + div input', PROJECT_BRANCH);
+        projects.setValue('label[for="scm_url"] + div input', data.PROJECT_URL);
+        projects.setValue('label[for="scm_branch"] + div input', data.PROJECT_BRANCH);
 
         projects.expect.element('#project_save_btn').enabled;
         projects.click('#project_save_btn');
@@ -84,7 +89,7 @@ module.exports = {
         projects.waitForElementNotVisible('div.spinny');
 
         projects.expect.element('smart-search input').enabled;
-        projects.sendKeys('smart-search input', `${PROJECT_NAME}${client.Keys.ENTER}`);
+        projects.sendKeys('smart-search input', `${data.PROJECT_NAME}${client.Keys.ENTER}`);
 
         projects.waitForElementVisible('div.spinny');
         projects.waitForElementNotVisible('div.spinny');
@@ -92,6 +97,12 @@ module.exports = {
         projects.waitForElementVisible('div.spinny', 120000);
         projects.waitForElementNotVisible('div.spinny');
         projects.expect.element('i[class$="success"]').visible;
+
+        projects.expect.element('#project_cancel_btn').visible;
+        projects.click('#project_cancel_btn');
+        client.refresh();
+        client.waitForElementVisible('div.spinny');
+        client.waitForElementNotVisible('div.spinny');
     },
     'create inventory': client => {
         const inventories = client.page.inventories();
@@ -112,8 +123,8 @@ module.exports = {
         details.expect.element('@name').enabled;
         details.expect.element('@organization').enabled;
 
-        details.setValue('@name', INVENTORY_NAME);
-        details.setValue('@organization', ORGANIZATION_NAME);
+        details.setValue('@name', data.INVENTORY_NAME);
+        details.setValue('@organization', data.ORGANIZATION_NAME);
 
         inventories.waitForElementVisible('@save');
         inventories.expect.element('@save').enabled;
@@ -124,7 +135,7 @@ module.exports = {
         inventories.waitForElementNotVisible('div.spinny');
     },
     'create host': client => {
-        const addHost = './/span[text()="+ ADD HOST"]';
+        const addHost = '.hostsList #button-add';
 
         client.expect.element('#hosts_tab').enabled;
         client.expect.element('#hosts_tab').css('opacity').equal('1');
@@ -134,13 +145,12 @@ module.exports = {
         client.waitForElementVisible('div.spinny');
         client.waitForElementNotVisible('div.spinny');
 
-        client.expect.element('#hosts_tab').css('background-color').contain('132, 137, 146');
+        client.expect.element('#hosts_tab').css('background-color').contain('100, 105, 114');
 
-        client.useXpath();
+        client.useCss();
         client.waitForElementVisible(addHost);
         client.expect.element(addHost).enabled;
         client.click(addHost);
-        client.useCss();
 
         client.waitForElementVisible('#host_name');
         client.sendKeys('#host_name', 'localhost');
@@ -148,8 +158,8 @@ module.exports = {
         client.click('div[class="CodeMirror-scroll"]');
         client.sendKeys('.CodeMirror textarea', client.Keys.ENTER);
         client.sendKeys('.CodeMirror textarea', 'ansible_connection: local');
-        client.click('#host_host_variables_parse_type label[class$="hollow"]');
-        client.click('#host_host_variables_parse_type label[class$="hollow"]');
+        client.click('#host_variables_parse_type label[class$="hollow"]');
+        client.click('#host_variables_parse_type label[class$="hollow"]');
 
         client.expect.element('#host_save_btn').enabled;
         client.click('#host_save_btn');
@@ -161,21 +171,12 @@ module.exports = {
         const credentials = client.page.credentials();
         const { details } = credentials.section.add.section;
 
-        credentials.section.navigation.waitForElementVisible('@credentials');
-        credentials.section.navigation.expect.element('@credentials').enabled;
-        credentials.section.navigation.click('@credentials');
-
-        credentials.waitForElementVisible('div.spinny');
-        credentials.waitForElementNotVisible('div.spinny');
-
-        credentials.section.list.waitForElementVisible('@add');
-        credentials.section.list.expect.element('@add').enabled;
-        credentials.section.list.click('@add');
+        client.navigateTo(`${credentials.url()}/add`);
 
         details.waitForElementVisible('@save');
         details.clearAndSelectType('Vault');
-        details.setValue('@organization', ORGANIZATION_NAME);
-        details.setValue('@name', VAULT_CREDENTIAL_NAME_1);
+        details.setValue('@organization', data.ORGANIZATION_NAME);
+        details.setValue('@name', data.VAULT_CREDENTIAL_NAME_1);
 
         details.section.vault.setValue('@vaultPassword', 'secret1');
         details.section.vault.setValue('@vaultIdentifier', 'first');
@@ -186,21 +187,12 @@ module.exports = {
         credentials.waitForElementVisible('div.spinny');
         credentials.waitForElementNotVisible('div.spinny');
 
-        credentials.section.navigation.waitForElementVisible('@credentials');
-        credentials.section.navigation.expect.element('@credentials').enabled;
-        credentials.section.navigation.click('@credentials');
-
-        credentials.waitForElementVisible('div.spinny');
-        credentials.waitForElementNotVisible('div.spinny');
-
-        credentials.section.list.waitForElementVisible('@add');
-        credentials.section.list.expect.element('@add').enabled;
-        credentials.section.list.click('@add');
+        client.navigateTo(`${credentials.url()}/add`);
 
         details.waitForElementVisible('@save');
         details.clearAndSelectType('Vault');
-        details.setValue('@organization', ORGANIZATION_NAME);
-        details.setValue('@name', VAULT_CREDENTIAL_NAME_2);
+        details.setValue('@organization', data.ORGANIZATION_NAME);
+        details.setValue('@name', data.VAULT_CREDENTIAL_NAME_2);
 
         details.section.vault.setValue('@vaultPassword', 'secret2');
         details.section.vault.setValue('@vaultIdentifier', 'second');
@@ -215,21 +207,12 @@ module.exports = {
         const credentials = client.page.credentials();
         const { details } = credentials.section.add.section;
 
-        credentials.section.navigation.waitForElementVisible('@credentials');
-        credentials.section.navigation.expect.element('@credentials').enabled;
-        credentials.section.navigation.click('@credentials');
-
-        credentials.waitForElementVisible('div.spinny');
-        credentials.waitForElementNotVisible('div.spinny');
-
-        credentials.section.list.waitForElementVisible('@add');
-        credentials.section.list.expect.element('@add').enabled;
-        credentials.section.list.click('@add');
+        client.navigateTo(`${credentials.url()}/add`);
 
         details.waitForElementVisible('@save');
         details.clearAndSelectType('Machine');
-        details.setValue('@organization', ORGANIZATION_NAME);
-        details.setValue('@name', MACHINE_CREDENTIAL_NAME);
+        details.setValue('@organization', data.ORGANIZATION_NAME);
+        details.setValue('@name', data.MACHINE_CREDENTIAL_NAME);
 
         details.expect.element('@save').enabled;
         details.click('@save');
@@ -240,21 +223,16 @@ module.exports = {
     'create job template': client => {
         const templates = client.page.templates();
 
-        templates.section.navigation.waitForElementVisible('@templates');
-        templates.section.navigation.expect.element('@templates').enabled;
-        templates.section.navigation.click('@templates');
-
-        templates.waitForElementVisible('div.spinny');
-        templates.waitForElementNotVisible('div.spinny');
+        client.navigateTo(templates.url());
 
         templates.selectAdd('Job Template');
-        templates.selectInventory(INVENTORY_NAME);
-        templates.selectProject(PROJECT_NAME);
-        templates.selectVaultCredential(VAULT_CREDENTIAL_NAME_1);
-        templates.selectVaultCredential(VAULT_CREDENTIAL_NAME_2);
-        templates.selectMachineCredential(MACHINE_CREDENTIAL_NAME);
-        templates.selectPlaybook(PLAYBOOK_NAME);
-        templates.sendKeys('label[for="name"] + div input', TEMPLATE_NAME);
+        templates.selectInventory(data.INVENTORY_NAME);
+        templates.selectProject(data.PROJECT_NAME);
+        templates.selectVaultCredential(data.VAULT_CREDENTIAL_NAME_1);
+        templates.selectVaultCredential(data.VAULT_CREDENTIAL_NAME_2);
+        templates.selectMachineCredential(data.MACHINE_CREDENTIAL_NAME);
+        templates.selectPlaybook(data.PLAYBOOK_NAME);
+        templates.sendKeys('label[for="name"] + div input', data.TEMPLATE_NAME);
 
         templates.expect.element('#job_template_save_btn').enabled;
         templates.click('#job_template_save_btn');
@@ -271,11 +249,11 @@ module.exports = {
         templates.expect.element('smart-search input').enabled;
 
         client.pause(1000).waitForElementNotVisible('div.spinny');
-        templates.sendKeys('smart-search input', `${TEMPLATE_NAME}${client.Keys.ENTER}`);
+        templates.sendKeys('smart-search input', `${data.TEMPLATE_NAME}${client.Keys.ENTER}`);
         templates.waitForElementVisible('div.spinny');
         templates.waitForElementNotVisible('div.spinny');
 
-        templates.sendKeys('smart-search input', `${TEMPLATE_NAME}${client.Keys.ENTER}`);
+        templates.sendKeys('smart-search input', `${data.TEMPLATE_NAME}${client.Keys.ENTER}`);
         templates.waitForElementVisible('div.spinny');
         templates.waitForElementNotVisible('div.spinny');
 
@@ -296,7 +274,7 @@ module.exports = {
         client.waitForElementVisible('div.spinny');
         client.waitForElementNotVisible('div.spinny');
 
-        client.waitForElementVisible('.JobResults-detailsPanel');
+        client.waitForElementVisible('at-job-details');
         client.waitForElementNotPresent(running, 60000);
         client.waitForElementVisible(success, 60000);
 

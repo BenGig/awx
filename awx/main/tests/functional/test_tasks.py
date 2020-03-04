@@ -1,5 +1,5 @@
 import pytest
-import mock
+from unittest import mock
 import os
 
 from django.utils.timezone import now, timedelta
@@ -32,16 +32,18 @@ class TestDependentInventoryUpdate:
         task.revision_path = scm_revision_file
         proj_update = ProjectUpdate.objects.create(project=scm_inventory_source.source_project)
         with mock.patch.object(RunProjectUpdate, '_update_dependent_inventories') as inv_update_mck:
-            task.post_run_hook(proj_update, 'successful')
-            inv_update_mck.assert_called_once_with(proj_update, mock.ANY)
+            with mock.patch.object(RunProjectUpdate, 'release_lock'):
+                task.post_run_hook(proj_update, 'successful')
+                inv_update_mck.assert_called_once_with(proj_update, mock.ANY)
 
     def test_no_unwanted_dependent_inventory_updates(self, project, scm_revision_file):
         task = RunProjectUpdate()
         task.revision_path = scm_revision_file
         proj_update = ProjectUpdate.objects.create(project=project)
         with mock.patch.object(RunProjectUpdate, '_update_dependent_inventories') as inv_update_mck:
-            task.post_run_hook(proj_update, 'successful')
-            assert not inv_update_mck.called
+            with mock.patch.object(RunProjectUpdate, 'release_lock'):
+                task.post_run_hook(proj_update, 'successful')
+                assert not inv_update_mck.called
 
     def test_dependent_inventory_updates(self, scm_inventory_source):
         task = RunProjectUpdate()
@@ -123,22 +125,6 @@ class TestIsolatedManagementTask:
         inst = ig.instances.create(hostname='isolated-old', capacity=103)
         inst.save()
         return inst
-
-    def test_old_version(self, control_instance, old_version):
-        update_capacity = isolated_manager.IsolatedManager.update_capacity
-
-        assert old_version.capacity == 103
-        with mock.patch('awx.main.tasks.settings', MockSettings()):
-            # Isolated node is reporting an older version than the cluster
-            # instance that issued the health check, set capacity to zero.
-            update_capacity(old_version, {'version': '1.0.0'}, '3.0.0')
-            assert old_version.capacity == 0
-
-            # Upgrade was completed, health check playbook now reports matching
-            # version, make sure capacity is set.
-            update_capacity(old_version, {'version': '5.0.0-things',
-                                          'capacity_cpu':103, 'capacity_mem':103}, '5.0.0-stuff')
-            assert old_version.capacity == 103
 
     def test_takes_action(self, control_instance, needs_updating):
         original_isolated_instance = needs_updating.instances.all().first()

@@ -1,5 +1,5 @@
 import pytest
-import mock
+from unittest import mock
 
 from django.contrib.auth.models import User
 from django.forms.models import model_to_dict
@@ -11,9 +11,9 @@ from awx.main.access import (
     JobTemplateAccess,
     WorkflowJobTemplateAccess,
     SystemJobTemplateAccess,
+    vars_are_encrypted
 )
 
-from awx.conf.license import LicenseForbids
 from awx.main.models import (
     Credential,
     CredentialType,
@@ -21,7 +21,6 @@ from awx.main.models import (
     Project,
     Role,
     Organization,
-    Instance,
 )
 
 
@@ -116,6 +115,20 @@ class TestRelatedFieldAccess:
             'related', mocker.MagicMock, data, obj=resource, mandatory=True)
 
 
+def test_encrypted_vars_detection():
+    assert vars_are_encrypted({
+        'aaa': {'b': 'c'},
+        'alist': [],
+        'test_var_eight': '$encrypted$UTF8$AESCBC$Z0FBQUF...==',
+        'test_var_five': 'four',
+    })
+    assert not vars_are_encrypted({
+        'aaa': {'b': 'c'},
+        'alist': [],
+        'test_var_five': 'four',
+    })
+
+
 @pytest.fixture
 def job_template_with_ids(job_template_factory):
     # Create non-persisted objects with IDs to send to job_template_factory
@@ -158,7 +171,7 @@ def test_jt_existing_values_are_nonsensitive(job_template_with_ids, user_unit):
     """Assure that permission checks are not required if submitted data is
     identical to what the job template already has."""
 
-    data = model_to_dict(job_template_with_ids)
+    data = model_to_dict(job_template_with_ids, exclude=['unifiedjobtemplate_ptr'])
     access = JobTemplateAccess(user_unit)
 
     assert access.changes_are_non_sensitive(job_template_with_ids, data)
@@ -184,49 +197,8 @@ def test_change_jt_sensitive_data(job_template_with_ids, mocker, user_unit):
     })
 
 
-def test_jt_add_scan_job_check(job_template_with_ids, user_unit):
-    "Assure that permissions to add scan jobs work correctly"
-
-    access = JobTemplateAccess(user_unit)
-    project = job_template_with_ids.project
-    inventory = job_template_with_ids.inventory
-    project.use_role = Role()
-    inventory.use_role = Role()
-    organization = Organization(name='test-org')
-    inventory.organization = organization
-    organization.admin_role = Role()
-
-    def mock_get_object(Class, **kwargs):
-        if Class == Project:
-            return project
-        elif Class == Inventory:
-            return inventory
-        else:
-            raise Exception('Item requested has not been mocked')
-
-    with mock.patch.object(JobTemplateAccess, 'check_license', return_value=None):
-        with mock.patch('awx.main.models.rbac.Role.__contains__', return_value=True):
-            with mock.patch('awx.main.access.get_object_or_400', mock_get_object):
-                assert access.can_add({
-                    'project': project.pk,
-                    'inventory': inventory.pk,
-                    'job_type': 'scan'
-                })
-
-
-def mock_raise_license_forbids(self, add_host=False, feature=None, check_expiration=True):
-    raise LicenseForbids("Feature not enabled")
-
-
 def mock_raise_none(self, add_host=False, feature=None, check_expiration=True):
     return None
-
-
-def test_jt_can_start_ha(job_template_with_ids):
-    with mock.patch.object(Instance.objects, 'active_count', return_value=2):
-        with mock.patch('awx.main.access.BaseAccess.check_license', new=mock_raise_license_forbids):
-            with pytest.raises(LicenseForbids):
-                JobTemplateAccess(user_unit).can_start(job_template_with_ids)
 
 
 def test_jt_can_add_bad_data(user_unit):

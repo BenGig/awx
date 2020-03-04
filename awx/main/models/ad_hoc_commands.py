@@ -3,7 +3,7 @@
 
 # Python
 import logging
-from urlparse import urljoin
+from urllib.parse import urljoin
 
 # Django
 from django.conf import settings
@@ -14,9 +14,11 @@ from django.core.exceptions import ValidationError
 
 # AWX
 from awx.api.versioning import reverse
-from awx.main.models.base import * # noqa
+from awx.main.models.base import (
+    prevent_search, AD_HOC_JOB_TYPE_CHOICES, VERBOSITY_CHOICES, VarsDictProperty
+)
 from awx.main.models.events import AdHocCommandEvent
-from awx.main.models.unified_jobs import * # noqa
+from awx.main.models.unified_jobs import UnifiedJob
 from awx.main.models.notifications import JobNotificationMixin, NotificationTemplate
 
 logger = logging.getLogger('awx.main.models.ad_hoc_commands')
@@ -28,6 +30,7 @@ class AdHocCommand(UnifiedJob, JobNotificationMixin):
 
     class Meta(object):
         app_label = 'main'
+        ordering = ('id',)
 
     diff_mode = models.BooleanField(
         default=False,
@@ -43,8 +46,7 @@ class AdHocCommand(UnifiedJob, JobNotificationMixin):
         null=True,
         on_delete=models.SET_NULL,
     )
-    limit = models.CharField(
-        max_length=1024,
+    limit = models.TextField(
         blank=True,
         default='',
     )
@@ -109,7 +111,7 @@ class AdHocCommand(UnifiedJob, JobNotificationMixin):
         return self.limit
 
     def clean_module_name(self):
-        if type(self.module_name) not in (str, unicode):
+        if type(self.module_name) is not str:
             raise ValidationError(_("Invalid type for ad hoc command"))
         module_name = self.module_name.strip() or 'command'
         if module_name not in settings.AD_HOC_COMMANDS:
@@ -117,7 +119,7 @@ class AdHocCommand(UnifiedJob, JobNotificationMixin):
         return module_name
 
     def clean_module_args(self):
-        if type(self.module_args) not in (str, unicode):
+        if type(self.module_args) is not str:
             raise ValidationError(_("Invalid type for ad hoc command"))
         module_args = self.module_args
         if self.module_name in ('command', 'shell') and not module_args:
@@ -136,8 +138,7 @@ class AdHocCommand(UnifiedJob, JobNotificationMixin):
         else:
             return []
 
-    @classmethod
-    def _get_parent_field_name(cls):
+    def _get_parent_field_name(self):
         return ''
 
     @classmethod
@@ -149,11 +150,19 @@ class AdHocCommand(UnifiedJob, JobNotificationMixin):
     def supports_isolation(cls):
         return True
 
+    @property
+    def is_containerized(self):
+        return bool(self.instance_group and self.instance_group.is_containerized)
+
+    @property
+    def can_run_containerized(self):
+        return True
+
     def get_absolute_url(self, request=None):
         return reverse('api:ad_hoc_command_detail', kwargs={'pk': self.pk}, request=request)
 
     def get_ui_url(self):
-        return urljoin(settings.TOWER_URL_BASE, "/#/ad_hoc_commands/{}".format(self.pk))
+        return urljoin(settings.TOWER_URL_BASE, "/#/jobs/command/{}".format(self.pk))
 
     @property
     def notification_templates(self):
@@ -162,18 +171,18 @@ class AdHocCommand(UnifiedJob, JobNotificationMixin):
             all_orgs.add(h.inventory.organization)
         active_templates = dict(error=set(),
                                 success=set(),
-                                any=set())
+                                started=set())
         base_notification_templates = NotificationTemplate.objects
         for org in all_orgs:
             for templ in base_notification_templates.filter(organization_notification_templates_for_errors=org):
                 active_templates['error'].add(templ)
             for templ in base_notification_templates.filter(organization_notification_templates_for_success=org):
                 active_templates['success'].add(templ)
-            for templ in base_notification_templates.filter(organization_notification_templates_for_any=org):
-                active_templates['any'].add(templ)
+            for templ in base_notification_templates.filter(organization_notification_templates_for_started=org):
+                active_templates['started'].add(templ)
         active_templates['error'] = list(active_templates['error'])
-        active_templates['any'] = list(active_templates['any'])
         active_templates['success'] = list(active_templates['success'])
+        active_templates['started'] = list(active_templates['started'])
         return active_templates
 
     def get_passwords_needed_to_start(self):

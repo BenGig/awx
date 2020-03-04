@@ -2,12 +2,17 @@
 # All Rights Reserved.
 
 # Python
+import codecs
 import re
 import os
+import logging
 from itertools import islice
+from configparser import ConfigParser
 
 # Django
 from django.utils.encoding import smart_str
+
+logger = logging.getLogger('awx.main.utils.ansible')
 
 
 __all__ = ['skip_directory', 'could_be_playbook', 'could_be_inventory']
@@ -44,13 +49,20 @@ def could_be_playbook(project_path, dir_path, filename):
     # show up.
     matched = False
     try:
-        for n, line in enumerate(open(playbook_path)):
+        for n, line in enumerate(codecs.open(
+            playbook_path,
+            'r',
+            encoding='utf-8',
+            errors='ignore'
+        )):
             if valid_playbook_re.match(line):
                 matched = True
+                break
             # Any YAML file can also be encrypted with vault;
             # allow these to be used as the main playbook.
             elif n == 0 and line.startswith('$ANSIBLE_VAULT;'):
                 matched = True
+                break
     except IOError:
         return None
     if not matched:
@@ -77,10 +89,32 @@ def could_be_inventory(project_path, dir_path, filename):
     # Ansible inventory mainly
     try:
         # only read through first 10 lines for performance
-        with open(inventory_path) as inv_file:
+        with codecs.open(
+            inventory_path,
+            'r',
+            encoding='utf-8',
+            errors='ignore'
+        ) as inv_file:
             for line in islice(inv_file, 10):
                 if not valid_inventory_re.match(line):
                     return None
     except IOError:
         return None
     return inventory_rel_path
+
+
+def read_ansible_config(project_path, variables_of_interest):
+    fnames = ['/etc/ansible/ansible.cfg']
+    if project_path:
+        fnames.insert(0, os.path.join(project_path, 'ansible.cfg'))
+    values = {}
+    try:
+        parser = ConfigParser()
+        parser.read(fnames)
+        if 'defaults' in parser:
+            for var in variables_of_interest:
+                if var in parser['defaults']:
+                    values[var] = parser['defaults'][var]
+    except Exception:
+        logger.exception('Failed to read ansible configuration(s) {}'.format(fnames))
+    return values

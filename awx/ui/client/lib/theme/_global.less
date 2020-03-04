@@ -13,6 +13,7 @@
 
     &[disabled] {
         background: @at-color-disabled;
+        border-color: @at-color-disabled;
     }
 }
 
@@ -22,8 +23,14 @@
         content: "+";
         font-size: 20px;
     }
-    border-color: transparent;
-    margin-left: @at-space-2x;
+    border: none;
+    display: inline-flex;
+    margin-left: @at-space-4x;
+
+    &[aria-expanded="true"] {
+        border-bottom-left-radius: 0;
+        border-bottom-right-radius: 0;
+    }
 }
 
 .at-Button--info {
@@ -48,6 +55,17 @@
 .at-ButtonIcon {
     padding: 4px @at-padding-button-horizontal;
     font-size: @at-font-size-body;
+}
+
+.at-ButtonIcon-noborder {
+    padding: 4px @at-padding-button-horizontal;
+    font-size: @at-font-size-body;
+    .at-mixin-Button();
+    .at-mixin-ButtonHollow(
+        'at-color-default',
+        'at-color-default',
+        'at-color-button-text-default'
+    );
 }
 
 .at-Button--expand {

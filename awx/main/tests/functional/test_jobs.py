@@ -1,8 +1,8 @@
 import pytest
-import mock
+from unittest import mock
 import json
 
-from awx.main.models import Job, Instance
+from awx.main.models import Job, Instance, JobHostSummary
 from awx.main.tasks import cluster_node_heartbeat
 from django.test.utils import override_settings
 
@@ -21,7 +21,6 @@ def test_orphan_unified_job_creation(instance, inventory):
 @pytest.mark.django_db
 @mock.patch('awx.main.utils.common.get_cpu_capacity', lambda: (2,8))
 @mock.patch('awx.main.utils.common.get_mem_capacity', lambda: (8000,62))
-@mock.patch('awx.main.tasks.handle_ha_toplogy_changes.apply_async', lambda: True)
 def test_job_capacity_and_with_inactive_node():
     i = Instance.objects.create(hostname='test-1')
     i.refresh_capacity()
@@ -43,9 +42,27 @@ def test_job_notification_data(inventory, machine_credential, project):
         survey_passwords={"SSN": encrypted_str},
         project=project,
     )
-    job.credentials = [machine_credential]
+    job.credentials.set([machine_credential])
     notification_data = job.notification_data(block=0)
     assert json.loads(notification_data['extra_vars'])['SSN'] == encrypted_str
+
+
+@pytest.mark.django_db
+def test_job_notification_host_data(inventory, machine_credential, project, job_template, host):
+    job = Job.objects.create(
+        job_template=job_template, inventory=inventory, name='hi world', project=project
+    )
+    JobHostSummary.objects.create(job=job, host=host, changed=1, dark=2, failures=3, ok=4, processed=3, skipped=2, rescued=1, ignored=0)
+    assert job.notification_data()['hosts'] == {'single-host': 
+                                                {'failed': True,
+                                                    'changed': 1, 
+                                                    'dark': 2, 
+                                                    'failures': 3, 
+                                                    'ok': 4, 
+                                                    'processed': 3, 
+                                                    'skipped': 2, 
+                                                    'rescued': 1, 
+                                                    'ignored': 0}}
 
 
 @pytest.mark.django_db

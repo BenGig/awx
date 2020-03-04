@@ -15,18 +15,11 @@ export default {
         parent: 'jobs',
         label: '{{ workflow.id }} - {{ workflow.name }}'
     },
-    data: {
-        socket: {
-            "groups":{
-                "jobs": ["status_changed"]
-            }
-        }
-    },
     templateUrl: templateUrl('workflow-results/workflow-results'),
     controller: workflowResultsController,
     resolve: {
         // the GET for the particular workflow
-        workflowData: ['Rest', 'GetBasePath', '$stateParams', '$q', '$state', 'Alert', function(Rest, GetBasePath, $stateParams, $q, $state, Alert) {
+        workflowData: ['Rest', 'GetBasePath', '$stateParams', '$q', '$state', 'Alert', 'i18n', function(Rest, GetBasePath, $stateParams, $q, $state, Alert, i18n) {
             Rest.setUrl(GetBasePath('workflow_jobs') + $stateParams.id);
             var defer = $q.defer();
             Rest.get()
@@ -36,9 +29,9 @@ export default {
                     defer.reject(data);
 
                     if (data.status === 404) {
-                        Alert('Job Not Found', 'Cannot find job.', 'alert-info');
+                        Alert(i18n._('Job Not Found'), i18n._('Cannot find job.'), 'alert-info');
                     } else if (data.status === 403) {
-                        Alert('Insufficient Permissions', 'You do not have permission to view this job.', 'alert-info');
+                        Alert(i18n._('Insufficient Permissions'), i18n._('You do not have permission to view this job.'), 'alert-info');
                     }
 
                     $state.go('jobs');
@@ -49,7 +42,7 @@ export default {
         // flashing as rest data comes in. Provides the list of workflow nodes
         workflowNodes: ['workflowData', 'Rest', '$q', function(workflowData, Rest, $q) {
             var defer = $q.defer();
-                Rest.setUrl(workflowData.related.workflow_nodes + '?order_by=id');
+                Rest.setUrl(workflowData.related.workflow_nodes + '?order_by=id&page_size=200');
                 Rest.get()
                     .then(({data}) => {
                         if(data.next) {

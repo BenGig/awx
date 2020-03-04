@@ -26,7 +26,6 @@ module.exports = {
         const templates = client.page.templates();
 
         client.useCss();
-        client.resizeWindow(1200, 800);
         client.login();
         client.waitForAngular();
 
@@ -53,6 +52,24 @@ module.exports = {
         templates.waitForElementVisible('div.spinny');
         templates.waitForElementNotVisible('div.spinny');
 
+        const activityStream = 'bread-crumb > div i[class$="icon-activity-stream"]';
+        const activityRow = '#activities_table .List-tableCell[class*="description-column"] a';
+        const toast = 'div[class="Toast-icon"]';
+
+        templates.waitForElementNotPresent(toast);
+        templates.expect.element(activityStream).visible;
+        templates.expect.element(activityStream).enabled;
+        templates.click(activityStream);
+        templates.waitForElementVisible('div.spinny');
+        templates.waitForElementNotVisible('div.spinny');
+
+        client
+            .waitForElementVisible(activityRow)
+            .click(activityRow);
+
+        templates.waitForElementVisible('div.spinny');
+        templates.waitForElementNotVisible('div.spinny');
+
         templates.expect.element('#job_template_form').visible;
         templates.section.addJobTemplate.expect.element('@title').visible;
         templates.section.addJobTemplate.expect.element('@title').text.contain(data.template.name);
@@ -65,10 +82,11 @@ module.exports = {
     'copy workflow template': client => {
         const templates = client.page.templates();
 
-        client.useCss();
-        client.resizeWindow(1200, 800);
-        client.login();
-        client.waitForAngular();
+        client
+            .useCss()
+            .resizeWindow(1200, 800)
+            .login()
+            .waitForAngular();
 
         templates.load();
         templates.waitForElementVisible('div.spinny');
@@ -95,6 +113,24 @@ module.exports = {
             .waitForElementNotVisible('div.spinny')
             .waitForAngular();
 
+        const activityStream = 'bread-crumb > div i[class$="icon-activity-stream"]';
+        const activityRow = '#activities_table .List-tableCell[class*="description-column"] a';
+        const toast = 'div[class="Toast-icon"]';
+
+        templates.waitForElementNotPresent(toast);
+        templates.expect.element(activityStream).visible;
+        templates.expect.element(activityStream).enabled;
+        templates.click(activityStream);
+        templates.waitForElementVisible('div.spinny');
+        templates.waitForElementNotVisible('div.spinny');
+
+        client
+            .waitForElementVisible(activityRow)
+            .click(activityRow);
+
+        templates.waitForElementVisible('div.spinny');
+        templates.waitForElementNotVisible('div.spinny');
+
         templates.expect.element('#workflow_job_template_form').visible;
         templates.section.editWorkflowJobTemplate.expect.element('@title').visible;
         templates.section.editWorkflowJobTemplate.expect.element('@title').text.contain(data.workflow.name);
@@ -102,13 +138,11 @@ module.exports = {
 
         templates.expect.element('@save').visible;
         templates.expect.element('@save').enabled;
+        client.pause(1000);
 
-        client
-            .useXpath()
-            .pause(1000)
-            .waitForElementVisible('//*[text()=" Workflow Editor"]')
-            .click('//*[text()=" Workflow Editor"]')
-            .useCss()
+        templates.section.editWorkflowJobTemplate
+            .waitForElementVisible('@visualizerButton')
+            .click('@visualizerButton')
             .waitForElementVisible('div.spinny')
             .waitForElementNotVisible('div.spinny')
             .waitForAngular();
@@ -144,14 +178,9 @@ module.exports = {
         client.expect.element('#node-3 text').text.not.equal('').after(5000);
         client.expect.element('#node-4 text').text.not.equal('').after(5000);
 
-        const checkNodeText = (selector, text) => client.getText(selector, ({ value }) => {
-            client.assert.equal(text.indexOf(value.replace('...', '')) >= 0, true);
-        });
-
-        checkNodeText('#node-1 text', 'START');
-        checkNodeText('#node-2 text', data.project.name);
-        checkNodeText('#node-3 text', data.template.name);
-        checkNodeText('#node-4 text', data.source.name);
+        client.useXpath().waitForElementVisible('//*[contains(@class, "WorkflowChart-nameText") and contains(text(), "test-actions-job")]/..');
+        client.useXpath().waitForElementVisible('//*[contains(@class, "WorkflowChart-nameText") and contains(text(), "test-actions-project")]/..');
+        client.useXpath().waitForElementVisible('//*[contains(@class, "WorkflowChart-nameText") and contains(text(), "test-actions-inventory")]/..');
 
         templates.expect.element('@save').visible;
         templates.expect.element('@save').enabled;

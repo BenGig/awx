@@ -31,7 +31,8 @@ module.exports = {
         $: true,
         _: true,
         codemirror: true,
-        jsyaml: true
+        jsyaml: true,
+        crypto: true
     },
     rules: {
         'arrow-parens': 'off',
@@ -54,6 +55,18 @@ module.exports = {
         'no-multiple-empty-lines': ['error', { max: 1 }],
         'object-curly-newline': 'off',
         'space-before-function-paren': ['error', 'always'],
-        'no-trailing-spaces': ['error']
-    }
+        'no-trailing-spaces': ['error'],
+        'prefer-destructuring': ['error', {
+            'VariableDeclarator': {
+              'array': false,
+              'object': true
+            },
+            'AssignmentExpression': {
+              'array': false,
+              'object': true
+            }
+          }, {
+            'enforceForRenamedProperties': false
+          }]
+      }
 };

@@ -4,41 +4,45 @@ This document provides a guide for installing AWX.
 
 ## Table of contents
 
-- [Getting started](#getting-started)
-  - [Clone the repo](#clone-the-repo)
-  - [AWX branding](#awx-branding)
-  - [Prerequisites](#prerequisites)
-  - [System Requirements](#system-requirements)
-  - [AWX Tunables](#awx-tunables)
-  - [Choose a deployment platform](#choose-a-deployment-platform)
-  - [Official vs Building Images](#official-vs-building-images)
-- [OpenShift](#openshift)
-  - [Prerequisites](#prerequisites-1)
-    - [Deploying to Minishift](#deploying-to-minishift)
-  - [Pre-build steps](#pre-build-steps)
-  - [PostgreSQL](#postgresql)
-  - [Start the build](#start-the-build)
-  - [Post build](#post-build)
-  - [Accessing AWX](#accessing-awx)
-- [Kubernetes](#kubernetes)
-  - [Prerequisites](#prerequisites-2)
-  - [Pre-build steps](#pre-build-steps-1)
-  - [Configuring Helm](#configuring-helm)
-  - [Start the build](#start-the-build-1)
-  - [Accessing AWX](#accessing-awx-1)
-  - [SSL Termination](#ssl-termination)
-- [Docker or Docker Compose](#docker-or-docker-compose)
-  - [Prerequisites](#prerequisites-3)
-  - [Pre-build steps](#pre-build-steps-2)
-    - [Deploying to a remote host](#deploying-to-a-remote-host)
-    - [Inventory variables](#inventory-variables)
+- [Installing AWX](#installing-awx)
+  * [Getting started](#getting-started)
+    + [Clone the repo](#clone-the-repo)
+    + [AWX branding](#awx-branding)
+    + [Prerequisites](#prerequisites)
+    + [System Requirements](#system-requirements)
+    + [AWX Tunables](#awx-tunables)
+    + [Choose a deployment platform](#choose-a-deployment-platform)
+    + [Official vs Building Images](#official-vs-building-images)
+  * [Upgrading from previous versions](#upgrading-from-previous-versions)
+  * [OpenShift](#openshift)
+    + [Prerequisites](#prerequisites-1)
+    + [Pre-install steps](#pre-install-steps)
+      - [Deploying to Minishift](#deploying-to-minishift)
+      - [PostgreSQL](#postgresql)
+    + [Run the installer](#run-the-installer)
+    + [Post-install](#post-install)
+    + [Accessing AWX](#accessing-awx)
+  * [Kubernetes](#kubernetes)
+    + [Prerequisites](#prerequisites-2)
+    + [Pre-install steps](#pre-install-steps-1)
+    + [Configuring Helm](#configuring-helm)
+    + [Run the installer](#run-the-installer-1)
+    + [Post-install](#post-install-1)
+    + [Accessing AWX](#accessing-awx-1)
+    + [SSL Termination](#ssl-termination)
+  * [Docker-Compose](#docker-compose)
+    + [Prerequisites](#prerequisites-3)
+    + [Pre-install steps](#pre-install-steps-2)
+      - [Deploying to a remote host](#deploying-to-a-remote-host)
+      - [Inventory variables](#inventory-variables)
       - [Docker registry](#docker-registry)
-      - [PostgreSQL](#postgresql-1)
       - [Proxy settings](#proxy-settings)
-  - [Start the build](#start-the-build-2)
-  - [Post build](#post-build-1)
-  - [Accessing AWX](#accessing-awx-2)
+      - [PostgreSQL](#postgresql-1)
+    + [Run the installer](#run-the-installer-2)
+    + [Post-install](#post-install-2)
+    + [Accessing AWX](#accessing-awx-2)
 
+    
 ## Getting started
 
 ### Clone the repo
@@ -57,21 +61,26 @@ To install the assets, clone the `awx-logos` repo so that it is next to your `aw
 
 Before you can run a deployment, you'll need the following installed in your local environment:
 
-- [Ansible](http://docs.ansible.com/ansible/latest/intro_installation.html) Requires Version 2.4+
+- [Ansible](http://docs.ansible.com/ansible/latest/intro_installation.html) Requires Version 2.8+
 - [Docker](https://docs.docker.com/engine/installation/)
-- [docker-py](https://github.com/docker/docker-py) Python module
+    + A recent version
+- [docker](https://pypi.org/project/docker/) Python module
+    + This is incompatible with `docker-py`. If you have previously installed `docker-py`, please uninstall it.
+    + We use this module instead of `docker-py` because it is what the `docker-compose` Python module requires.
 - [GNU Make](https://www.gnu.org/software/make/)
 - [Git](https://git-scm.com/) Requires Version 1.8.4+
+- [Node 10.x LTS version](https://nodejs.org/en/download/)
+- [NPM 6.x LTS](https://docs.npmjs.com/)
 
 ### System Requirements
 
 The system that runs the AWX service will need to satisfy the following requirements
 
-- At leasts 4GB of memory
+- At least 4GB of memory
 - At least 2 cpu cores
 - At least 20GB of space
 - Running Docker, Openshift, or Kubernetes
-- If you choose to use an external PostgreSQL database, please note that the minimum version is 9.4.
+- If you choose to use an external PostgreSQL database, please note that the minimum version is 9.6+.
 
 ### AWX Tunables
 
@@ -79,14 +88,14 @@ The system that runs the AWX service will need to satisfy the following requirem
 
 ### Choose a deployment platform
 
-We currently support running AWX as a containerized application using Docker images deployed to either an OpenShift cluster, docker-compose or a standalone Docker daemon. The remainder of this document will walk you through the process of building the images, and deploying them to either platform.
+We currently support running AWX as a containerized application using Docker images deployed to either an OpenShift cluster, a Kubernetes cluster, or docker-compose. The remainder of this document will walk you through the process of building the images, and deploying them to either platform.
 
 The [installer](./installer) directory contains an [inventory](./installer/inventory) file, and a playbook, [install.yml](./installer/install.yml). You'll begin by setting variables in the inventory file according to the platform you wish to use, and then you'll start the image build and deployment process by running the playbook.
 
 In the sections below, you'll find deployment details and instructions for each platform:
 - [OpenShift](#openshift)
 - [Kubernetes](#kubernetes)
-- [Docker or Docker Compose](#docker-or-docker-compose).
+- [Docker Compose](#docker-compose).
 
 ### Official vs Building Images
 
@@ -109,53 +118,69 @@ If these variables are present then all deployments will use these hosted images
 
 > Multiple versions are provided. `latest` always pulls the most recent. You may also select version numbers at different granularities: 1, 1.0, 1.0.1, 1.0.0.123
 
+
+## Upgrading from previous versions
+
+Upgrading AWX involves rerunning the install playbook. Download a newer release from [https://github.com/ansible/awx/releases](https://github.com/ansible/awx/releases) and re-populate the inventory file with your customized variables.
+
+For convenience, you can create a file called `vars.yml`:
+
+```
+admin_password: 'adminpass'
+pg_password: 'pgpass'
+rabbitmq_password: 'rabbitpass'
+secret_key: 'mysupersecret'
+```
+
+And pass it to the installer:
+
+```
+$ ansible-playbook -i inventory install.yml -e @vars.yml
+```
+
 ## OpenShift
 
 ### Prerequisites
 
 To complete a deployment to OpenShift, you will obviously need access to an OpenShift cluster. For demo and testing purposes, you can use [Minishift](https://github.com/minishift/minishift) to create a single node cluster running inside a virtual machine.
 
+When using OpenShift for deploying AWX make sure you have correct privileges to add the security context 'privileged', otherwise the installation will fail. The privileged context is needed because of the use of [the bubblewrap tool](https://github.com/containers/bubblewrap) to add an additional layer of security when using containers.
+
 You will also need to have the `oc` command in your PATH. The `install.yml` playbook will call out to `oc` when logging into, and creating objects on the cluster.
 
-The default resource requests per-pod requires:
+The default resource requests per-deployment requires:
 
 > Memory: 6GB
 > CPU: 3 cores
 
-This can be tuned by overriding the variables found in [/installer/openshift/defaults/main.yml](/installer/openshift/defaults/main.yml). Special care should be taken when doing this as undersized instances will experience crashes and resource exhaustion.
+This can be tuned by overriding the variables found in [/installer/roles/kubernetes/defaults/main.yml](/installer/roles/kubernetes/defaults/main.yml). Special care should be taken when doing this as undersized instances will experience crashes and resource exhaustion.
 
 For more detail on how resource requests are formed see: [https://docs.openshift.com/container-platform/latest/dev_guide/compute_resources.html#dev-compute-resources](https://docs.openshift.com/container-platform/latest/dev_guide/compute_resources.html#dev-compute-resources)
 
-#### Deploying to Minishift
+### Pre-install steps
 
-Install Minishift by following the [installation guide](https://docs.openshift.org/latest/minishift/getting-started/installing.html).
-
-The Minishift VM contains a Docker daemon, which you can use to build the AWX images. This is generally the approach you should take, and we recommend doing so. To use this instance, run the following command to setup your environment:
-
-```bash
-# Set DOCKER environment variable to point to the Minishift VM
-$ eval $(minishift docker-env)
-```
-
-**Note**
-
-> If you choose to not use the Docker instance running inside the VM, and build the images externally, you will have to enable the OpenShift cluster to access the images. This involves pushing the images to an external Docker registry, and granting the cluster access to it, or exposing the internal registry, and pushing the images into it.
-
-### Pre-build steps
-
-Before starting the build process, review the [inventory](./installer/inventory) file, and uncomment and provide values for the following variables found in the `[all:vars]` section:
+Before starting the install, review the [inventory](./installer/inventory) file, and uncomment and provide values for the following variables found in the `[all:vars]` section:
 
 *openshift_host*
 
 > IP address or hostname of the OpenShift cluster. If you're using Minishift, this will be the value returned by `minishift ip`.
 
-*awx_openshift_project*
+
+*openshift_skip_tls_verify*
+
+> Boolean. Set to True if using self-signed certs.
+
+*openshift_project*
 
 > Name of the OpenShift project that will be created, and used as the namespace for the AWX app. Defaults to *awx*.
 
 *openshift_user*
 
 > Username of the OpenShift user that will create the project, and deploy the application. Defaults to *developer*.
+
+*openshift_pg_emptydir*
+
+> Boolean. Set to True to use an emptyDir volume when deploying the PostgreSQL pod. Note: This should only be used for demo and testing purposes.
 
 *docker_registry*
 
@@ -169,28 +194,47 @@ Before starting the build process, review the [inventory](./installer/inventory)
 
 > Username of the user that will push images to the registry. Will generally match the *openshift_user* value. Defaults to *developer*. This is not needed if you are using official hosted images.
 
+#### Deploying to Minishift
+
+Install Minishift by following the [installation guide](https://docs.openshift.org/latest/minishift/getting-started/installing.html).
+
+The recommended minimum resources for your Minishift VM:
+
+```bash
+$ minishift start --cpus=4 --memory=8GB
+```
+
+The Minishift VM contains a Docker daemon, which you can use to build the AWX images. This is generally the approach you should take, and we recommend doing so. To use this instance, run the following command to setup your environment:
+
+```bash
+# Set DOCKER environment variable to point to the Minishift VM
+$ eval $(minishift docker-env)
+```
+
+**Note**
+
+> If you choose to not use the Docker instance running inside the VM, and build the images externally, you will have to enable the OpenShift cluster to access the images. This involves pushing the images to an external Docker registry, and granting the cluster access to it, or exposing the internal registry, and pushing the images into it.
+
 #### PostgreSQL
 
-AWX requires access to a PostgreSQL database, and by default, one will be created and deployed in a pod. The database is configured for persistence and will create a persistent volume claim named `postgresql`. By default it will claim 5GB from the available persistent volume pool. This can be tuned by setting a variable in the inventory file or on the command line during the `ansible-playbook` run.
+By default, AWX will deploy a PostgreSQL pod inside of your cluster. You will need to create a [Persistent Volume Claim](https://docs.openshift.org/latest/dev_guide/persistent_volumes.html) which is named `postgresql` by default, and can be overridden by setting the `openshift_pg_pvc_name` variable. For testing and demo purposes, you may set `openshift_pg_emptydir=yes`.
 
-    ansible-playbook ... -e pg_volume_capacity=n
+If you wish to use an external database, in the inventory file, set the value of `pg_hostname`, and update `pg_username`, `pg_password`, `pg_admin_password`, `pg_database`, and `pg_port` with the connection information. When setting `pg_hostname` the installer will assume you have configured the database in that location and will not launch the postgresql pod.
 
-If you wish to use an external database, in the inventory file, set the value of `pg_hostname`, and update `pg_username`, `pg_password`, `pg_database`, and `pg_port` with the connection information. When setting `pg_hostname` the installer will assume you have configured the database in that location and will not launch the postgresql pod.
+### Run the installer
 
-### Start the build
-
-To start the build, you will pass two *extra* variables on the command line. The first is *openshift_password*, which is the password for the *openshift_user*, and the second is *docker_registry_password*, which is the password associated with *docker_registry_username*.
+To start the install, you will pass two *extra* variables on the command line. The first is *openshift_password*, which is the password for the *openshift_user*, and the second is *docker_registry_password*, which is the password associated with *docker_registry_username*.
 
 If you're using the OpenShift internal registry, then you'll pass an access token for the *docker_registry_password* value, rather than a password. The `oc whoami -t` command will generate the required token, as long as you're logged into the cluster via `oc cluster login`.
 
-To start the build and deployment, run the following (docker_registry_password is optional if using official images):
+Run the following command (docker_registry_password is optional if using official images):
 
 ```bash
-# Start the build and deployment
+# Start the install
 $ ansible-playbook -i inventory install.yml -e openshift_password=developer  -e docker_registry_password=$(oc whoami -t)
 ```
 
-### Post build
+### Post-install
 
 After the playbook run completes, check the status of the deployment by running `oc get pods`:
 
@@ -221,7 +265,7 @@ Using /etc/ansible/ansible.cfg as config file
 }
 Operations to perform:
   Synchronize unmigrated apps: solo, api, staticfiles, messages, channels, django_extensions, ui, rest_framework, polymorphic
-  Apply all migrations: sso, taggit, sessions, djcelery, sites, kombu_transport_django, social_auth, contenttypes, auth, conf, main
+  Apply all migrations: sso, taggit, sessions, sites, kombu_transport_django, social_auth, contenttypes, auth, conf, main
 Synchronizing apps without migrations:
   Creating tables...
     Running deferred SQL...
@@ -303,19 +347,19 @@ The default resource requests per-pod requires:
 > Memory: 6GB
 > CPU: 3 cores
 
-This can be tuned by overriding the variables found in [/installer/kubernetes/defaults/main.yml](/installer/kubernetes[/defaults/main.yml). Special care should be taken when doing this as undersized instances will experience crashes and resource exhaustion.
+This can be tuned by overriding the variables found in [/installer/roles/kubernetes/defaults/main.yml](/installer/roles/kubernetes/defaults/main.yml). Special care should be taken when doing this as undersized instances will experience crashes and resource exhaustion.
 
 For more detail on how resource requests are formed see: [https://kubernetes.io/docs/concepts/configuration/manage-compute-resources-container/](https://kubernetes.io/docs/concepts/configuration/manage-compute-resources-container/)
 
-### Pre-build steps
+### Pre-install steps
 
-Before starting the build process, review the [inventory](./installer/inventory) file, and uncomment and provide values for the following variables found in the `[all:vars]` section uncommenting when necessary. Make sure the openshift and standalone docker sections are commented out:
+Before starting the install process, review the [inventory](./installer/inventory) file, and uncomment and provide values for the following variables found in the `[all:vars]` section uncommenting when necessary. Make sure the openshift and standalone docker sections are commented out:
 
 *kubernetes_context*
 
 > Prior to running the installer, make sure you've configured the context for the cluster you'll be installing to. This is how the installer knows which cluster to connect to and what authentication to use
 
-*awx_kubernetes_namespace*
+*kubernetes_namespace*
 
 > Name of the Kubernetes namespace where the AWX resources will be installed. This will be created if it doesn't exist
 
@@ -329,7 +373,7 @@ If you want the AWX installer to manage creating the database pod (rather than i
 
 Newer Kubernetes clusters with RBAC enabled will need to make sure a service account is created, make sure to follow the instructions here [https://docs.helm.sh/using_helm/#role-based-access-control](https://docs.helm.sh/using_helm/#role-based-access-control)
 
-### Start the build
+### Run the installer
 
 After making changes to the `inventory` file use `ansible-playbook` to begin the install
 
@@ -337,7 +381,7 @@ After making changes to the `inventory` file use `ansible-playbook` to begin the
 $ ansible-playbook -i inventory install.yml
 ```
 
-### Post build
+### Post-install
 
 After the playbook run completes, check the status of the deployment by running `kubectl get pods --namespace awx` (replace awx with the namespace you used):
 
@@ -376,20 +420,20 @@ If your provider is able to allocate an IP Address from the Ingress controller t
 Unlike Openshift's `Route` the Kubernetes `Ingress` doesn't yet handle SSL termination. As such the default configuration will only expose AWX through HTTP on port 80. You are responsible for configuring SSL support until support is added (either to Kubernetes or AWX itself).
 
 
-## Docker or Docker-Compose
+## Docker-Compose
 
 ### Prerequisites
 
 - [Docker](https://docs.docker.com/engine/installation/) on the host where AWX will be deployed. After installing Docker, the Docker service must be started (depending on your OS, you may have to add the local user that uses Docker to the ``docker`` group, refer to the documentation for details)
-- [docker-py](https://github.com/docker/docker-py) Python module.
+- [docker-compose](https://pypi.org/project/docker-compose/) Python module.
+    + This also installs the `docker` Python module, which is incompatible with `docker-py`. If you have previously installed `docker-py`, please uninstall it.
+- [Docker Compose](https://docs.docker.com/compose/install/).
 
-If you're installing using Docker Compose, you'll need [Docker Compose](https://docs.docker.com/compose/install/).
-
-### Pre-build steps
+### Pre-install steps
 
 #### Deploying to a remote host
 
-By default, the delivered [installer/inventory](./installer/inventory) file will deploy AWX to the local host. It is possible; however, to deploy to a remote host. The [installer/install.yml](./installer/install.yml) playbook can be used to build images on the local host, and ship the built images to, and run deployment tasks on, a remote host. To do this, modify the [installer/inventory](./installer/inventory) file, by commenting out `localhost`, and adding the remote host.
+By default, the delivered [installer/inventory](./installer/inventory) file will deploy AWX to the local host. It is possible, however, to deploy to a remote host. The [installer/install.yml](./installer/install.yml) playbook can be used to build images on the local host, and ship the built images to, and run deployment tasks on, a remote host. To do this, modify the [installer/inventory](./installer/inventory) file, by commenting out `localhost`, and adding the remote host.
 
 For example, suppose you wish to build images locally on your CI/CD host, and deploy them to a remote host named *awx-server*. To do this, add *awx-server* to the [installer/inventory](./installer/inventory) file, and comment out or remove `localhost`, as demonstrated by the following:
 
@@ -411,12 +455,12 @@ If you choose to use the official images then the remote host will be the one to
 
 > As mentioned above, in [Prerequisites](#prerequisites-1), the prerequisites are required on the remote host.
 
-> When deploying to a remote host, the playook does not execute tasks with the `become` option. For this reason, make sure the user that connects to the remote host has privileges to run the `docker` command. This typically means that non-privileged users need to be part of the `docker` group.
+> When deploying to a remote host, the playbook does not execute tasks with the `become` option. For this reason, make sure the user that connects to the remote host has privileges to run the `docker` command. This typically means that non-privileged users need to be part of the `docker` group.
 
 
 #### Inventory variables
 
-Before starting the build process, review the [inventory](./installer/inventory) file, and uncomment and provide values for the following variables found in the `[all:vars]` section:
+Before starting the install process, review the [inventory](./installer/inventory) file, and uncomment and provide values for the following variables found in the `[all:vars]` section:
 
 *postgres_data_dir*
 
@@ -426,13 +470,25 @@ Before starting the build process, review the [inventory](./installer/inventory)
 
 > Provide a port number that can be mapped from the Docker daemon host to the web server running inside the AWX container. Defaults to *80*.
 
-*use_docker_compose*
+*host_port_ssl*
 
-> Switch to ``true`` to use Docker Compose instead of the standalone Docker install.
+> Provide a port number that can be mapped from the Docker daemon host to the web server running inside the AWX container for SSL support. Defaults to *443*, only works if you also set `ssl_certificate` (see below).
+
+*ssl_certificate*
+
+> Optionally, provide the path to a file that contains a certificate and its private key.
 
 *docker_compose_dir*
 
-When using docker-compose, the `docker-compose.yml` file will be created there (default `/var/lib/awx`).
+> When using docker-compose, the `docker-compose.yml` file will be created there (default `/tmp/awxcompose`).
+
+*custom_venv_dir*
+
+> Adds the custom venv environments from the local host to be passed into the containers at install.
+
+*ca_trust_dir*
+
+> If you're using a non trusted CA, provide a path where the untrusted Certs are stored on your Host.
 
 #### Docker registry
 
@@ -449,10 +505,6 @@ If you wish to tag and push built images to a Docker registry, set the following
 *docker_registry_username*
 
 > Username of the user that will push images to the registry. Defaults to *developer*.
-
-*docker_remove_local_images*
-
-> Due to the way that the docker_image module behaves, images will not be pushed to a remote repository if they are present locally.  Set this to delete local versions of the images that will be pushed to the remote.  This will fail if containers are currently running from those images.
 
 **Note**
 
@@ -477,11 +529,11 @@ If you wish to tag and push built images to a Docker registry, set the following
 
 AWX requires access to a PostgreSQL database, and by default, one will be created and deployed in a container, and data will be persisted to a host volume. In this scenario, you must set the value of `postgres_data_dir` to a path that can be mounted to the container. When the container is stopped, the database files will still exist in the specified path.
 
-If you wish to use an external database, in the inventory file, set the value of `pg_hostname`, and update `pg_username`, `pg_password`, `pg_database`, and `pg_port` with the connection information.
+If you wish to use an external database, in the inventory file, set the value of `pg_hostname`, and update `pg_username`, `pg_password`, `pg_admin_password`, `pg_database`, and `pg_port` with the connection information.
 
-### Start the build
+### Run the installer
 
-If you are not pushing images to a Docker registry, start the build by running the following:
+If you are not pushing images to a Docker registry, start the install by running the following:
 
 ```bash
 # Set the working directory to installer
@@ -501,14 +553,14 @@ $ cd installer
 $ ansible-playbook -i inventory -e docker_registry_password=password install.yml
 ```
 
-### Post build
+### Post-install
 
 After the playbook run completes, Docker will report up to 5 running containers. If you chose to use an existing PostgresSQL database, then it will report 4. You can view the running containers using the `docker ps` command, as follows:
 
 ```bash
 CONTAINER ID        IMAGE               COMMAND                  CREATED             STATUS              PORTS                                NAMES
 e240ed8209cd        awx_task:1.0.0.8    "/tini -- /bin/sh ..."   2 minutes ago       Up About a minute   8052/tcp                             awx_task
-1cfd02601690        awx_web:1.0.0.8     "/tini -- /bin/sh ..."   2 minutes ago       Up About a minute   0.0.0.0:80->8052/tcp                 awx_web
+1cfd02601690        awx_web:1.0.0.8     "/tini -- /bin/sh ..."   2 minutes ago       Up About a minute   0.0.0.0:443->8052/tcp                 awx_web
 55a552142bcd        memcached:alpine    "docker-entrypoint..."   2 minutes ago       Up 2 minutes        11211/tcp                            memcached
 84011c072aad        rabbitmq:3          "docker-entrypoint..."   2 minutes ago       Up 2 minutes        4369/tcp, 5671-5672/tcp, 25672/tcp   rabbitmq
 97e196120ab3        postgres:9.6        "docker-entrypoint..."   2 minutes ago       Up 2 minutes        5432/tcp                             postgres
@@ -533,7 +585,7 @@ Using /etc/ansible/ansible.cfg as config file
 }
 Operations to perform:
   Synchronize unmigrated apps: solo, api, staticfiles, messages, channels, django_extensions, ui, rest_framework, polymorphic
-  Apply all migrations: sso, taggit, sessions, djcelery, sites, kombu_transport_django, social_auth, contenttypes, auth, conf, main
+  Apply all migrations: sso, taggit, sessions, sites, kombu_transport_django, social_auth, contenttypes, auth, conf, main
 Synchronizing apps without migrations:
   Creating tables...
     Running deferred SQL...
@@ -578,14 +630,3 @@ Added instance awx to tower
 The AWX web server is accessible on the deployment host, using the *host_port* value set in the *inventory* file. The default URL is [http://localhost](http://localhost).
 
 You will prompted with a login dialog. The default administrator username is `admin`, and the password is `password`.
-
-### Maintenance using docker-compose
-
-After the installation, maintenance operations with docker-compose can be done by using the  `docker-compose.yml` file created at the location pointed by `docker_compose_dir`.
-
-Among the possible operations, you may:
-
-- Stop AWX : `docker-compose stop`
-- Upgrade AWX : `docker-compose pull && docker-compose up --force-recreate`
-
-See the [docker-compose documentation](https://docs.docker.com/compose/) for details.

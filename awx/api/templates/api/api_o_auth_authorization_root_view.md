@@ -29,17 +29,6 @@ to the redirect_uri specified in the application. The client application will th
 AWX will respond with the `access_token`, `token_type`, `refresh_token`, and `expires_in`. For more
 information on testing this flow, refer to [django-oauth-toolkit](http://django-oauth-toolkit.readthedocs.io/en/latest/tutorial/tutorial_01.html#test-your-authorization-server).
 
-## Create Token for an Application using Implicit grant type
-Suppose we have an application "admin's app" of grant type `implicit`.
-In API browser, first make sure the user is logged in via session auth, then visit authorization
-endpoint with given parameters:
-```text
-http://localhost:8013/api/o/authorize/?response_type=token&client_id=L0uQQWW8pKX51hoqIRQGsuqmIdPi2AcXZ9EJRGmj&scope=read
-```
-Here the value of `client_id` should be the same as that of `client_id` field of underlying application.
-On success, an authorization page should be displayed asking the logged in user to grant/deny the access token.
-Once the user clicks on 'grant', the API browser will try POSTing to the same endpoint with the same parameters 
-in POST body, on success a 302 redirect will be returned.  
 
 ## Create Token for an Application using Password grant type
 
@@ -56,6 +45,7 @@ For example:
 
 ```bash
 curl -X POST \
+  -H "Content-Type: application/x-www-form-urlencoded" \
   -d "grant_type=password&username=<username>&password=<password>&scope=read" \
   -u "gwSPoasWSdNkMDtBN3Hu2WYQpPWCO9SwUEsKK22l:fI6ZpfocHYBGfm1tP92r0yIgCyfRdDQt0Tos9L8a4fNsJjQQMwp9569e
 IaUBsaVDgt2eiwOGe0bg5m5vCSstClZmtdy359RVx2rQK5YlIWyPlrolpt2LEpVeKXWaiybo" \
@@ -85,6 +75,7 @@ format:
 The `/api/o/token/` endpoint is used for refreshing access token:
 ```bash
 curl -X POST \
+  -H "Content-Type: application/x-www-form-urlencoded" \
   -d "grant_type=refresh_token&refresh_token=AL0NK9TTpv0qp54dGbC4VUZtsZ9r8z" \
   -u "gwSPoasWSdNkMDtBN3Hu2WYQpPWCO9SwUEsKK22l:fI6ZpfocHYBGfm1tP92r0yIgCyfRdDQt0Tos9L8a4fNsJjQQMwp9569eIaUBsaVDgt2eiwOGe0bg5m5vCSstClZmtdy359RVx2rQK5YlIWyPlrolpt2LEpVeKXWaiybo" \
   http://localhost:8013/api/o/token/ -i
@@ -114,6 +105,7 @@ Revoking is done by POSTing to `/api/o/revoke_token/` with the token to revoke a
 
 ```bash
 curl -X POST -d "token=rQONsve372fQwuc2pn76k3IHDCYpi7" \
+  -H "Content-Type: application/x-www-form-urlencoded" \
   -u "gwSPoasWSdNkMDtBN3Hu2WYQpPWCO9SwUEsKK22l:fI6ZpfocHYBGfm1tP92r0yIgCyfRdDQt0Tos9L8a4fNsJjQQMwp9569eIaUBsaVDgt2eiwOGe0bg5m5vCSstClZmtdy359RVx2rQK5YlIWyPlrolpt2LEpVeKXWaiybo" \
   http://localhost:8013/api/o/revoke_token/ -i
 ```

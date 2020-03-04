@@ -108,7 +108,6 @@
                 {status_tooltip: inventory_source_status.tooltip},
                 {launch_tooltip: inventory_source_status.launch_tip},
                 {launch_class: inventory_source_status.launch_class},
-                {group_schedule_tooltip: inventory_source_status.schedule_tip},
                 {source: inventory_source ? inventory_source.source : null},
                 {status: inventory_source ? inventory_source.status : null});
         }
@@ -196,7 +195,7 @@
                         resourceName: $filter('sanitize')(inventory_source.name),
                         body: deleteModalBody,
                         action: action,
-                        actionText: 'DELETE'
+                        actionText: i18n._('DELETE')
                     });
                     $rootScope.promptActionBtnClass = 'Modal-errorButton';
                 });
@@ -213,16 +212,12 @@
         $scope.cancelUpdate = function (id) {
             CancelSourceUpdate({ scope: $scope, id: id });
         };
+
         $scope.viewUpdateStatus = function (id) {
             ViewUpdateStatus({
                 scope: $scope,
                 inventory_source_id: id
             });
-        };
-        $scope.scheduleSource = function(id) {
-            // Add this inv source's id to the array of inv source id's so that it gets
-            // added to the breadcrumb trail
-            $state.go('inventories.edit.inventory_sources.edit.schedules', {inventory_source_id: id}, {reload: true});
         };
 
         $scope.syncAllSources = function() {

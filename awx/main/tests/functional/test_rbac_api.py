@@ -1,16 +1,10 @@
-import mock # noqa
+from unittest import mock # noqa
 import pytest
 
 from django.db import transaction
 from awx.api.versioning import reverse
 from awx.main.models.rbac import Role, ROLE_SINGLETON_SYSTEM_ADMINISTRATOR
 
-
-def mock_feature_enabled(feature):
-    return True
-
-
-#@mock.patch('awx.api.views.feature_enabled', new=mock_feature_enabled)
 
 
 @pytest.fixture
@@ -56,7 +50,6 @@ def test_get_roles_list_user(organization, inventory, team, get, user):
     assert Role.singleton(ROLE_SINGLETON_SYSTEM_ADMINISTRATOR).id in role_hash
     assert organization.admin_role.id in role_hash
     assert organization.member_role.id in role_hash
-    assert this_user.admin_role.id in role_hash
     assert custom_role.id in role_hash
 
     assert inventory.admin_role.id not in role_hash
@@ -99,12 +92,12 @@ def test_cant_create_role(post, admin):
 
 
 @pytest.mark.django_db
-def test_cant_delete_role(delete, admin):
+def test_cant_delete_role(delete, admin, inventory):
     "Ensure we can't delete roles through the api"
     # Some day we might want to do this, but until that is speced out, lets
     # ensure we don't slip up and allow this implicitly through some helper or
     # another
-    response = delete(reverse('api:role_detail', kwargs={'pk': admin.admin_role.id}), admin)
+    response = delete(reverse('api:role_detail', kwargs={'pk': inventory.admin_role.id}), admin)
     assert response.status_code == 405
 
 

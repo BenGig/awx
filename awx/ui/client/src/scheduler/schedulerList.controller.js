@@ -13,13 +13,12 @@
 
 export default [
     '$filter', '$scope', '$location', '$stateParams', 'ScheduleList', 'Rest',
-    'rbacUiControlService',
-    'ToggleSchedule', 'DeleteSchedule', '$q', '$state', 'Dataset', 'ParentObject', 'UnifiedJobsOptions',
-    function($filter, $scope, $location, $stateParams,
-        ScheduleList, Rest,
-        rbacUiControlService,
-        ToggleSchedule, DeleteSchedule,
-        $q, $state, Dataset, ParentObject, UnifiedJobsOptions) {
+    'rbacUiControlService', 'JobTemplateModel', 'ToggleSchedule', 'DeleteSchedule',
+    '$q', '$state', 'Dataset', 'ParentObject', 'UnifiedJobsOptions', 'i18n', 'SchedulerStrings',
+    function($filter, $scope, $location, $stateParams, ScheduleList, Rest,
+        rbacUiControlService, JobTemplate, ToggleSchedule, DeleteSchedule,
+        $q, $state, Dataset, ParentObject, UnifiedJobsOptions, i18n, strings
+    ) {
 
         var base, scheduleEndpoint,
             list = ScheduleList;
@@ -35,6 +34,19 @@ export default [
                     .then(function(params) {
                         $scope.canAdd = params.canAdd;
                     });
+                if (_.has(ParentObject, 'type') && ParentObject.type === 'job_template') {
+                    const jobTemplate = new JobTemplate();
+                    jobTemplate.getLaunch(ParentObject.id)
+                        .then(({data}) => {
+                            if (data.passwords_needed_to_start &&
+                                data.passwords_needed_to_start.length > 0 &&
+                                !ParentObject.ask_credential_on_launch
+                            ) {
+                                $scope.credentialRequiresPassword = true;
+                                $scope.addTooltip = i18n._("Using a credential that requires a password on launch is prohibited when creating a Job Template schedule");
+                            }
+                        });
+                }
             }
 
             // search init
@@ -89,31 +101,45 @@ export default [
                 }
                 buildTooltips(itm);
 
-                if (!$state.is('jobs.schedules')){
-                    if($state.current.name.endsWith('.add')) {
-                        itm.linkToDetails = `^.edit({schedule_id:schedule.id})`;
-                    }
-                    else if($state.current.name.endsWith('.edit')) {
-                        itm.linkToDetails = `.({schedule_id:schedule.id})`;
-                    }
-                    else {
-                        itm.linkToDetails = `.edit({schedule_id:schedule.id})`;
+                let stateParams = { schedule_id: item.id };
+                let route = '';
+                if (item.summary_fields.unified_job_template) {
+                    if (item.summary_fields.unified_job_template.unified_job_type === 'job') {
+                        route = 'templates.editJobTemplate.schedules.edit';
+                        stateParams.job_template_id = item.summary_fields.unified_job_template.id;
+                    } else if (item.summary_fields.unified_job_template.unified_job_type === 'project_update') {
+                        route = 'projects.edit.schedules.edit';
+                        stateParams.project_id = item.summary_fields.unified_job_template.id;
+                    } else if (item.summary_fields.unified_job_template.unified_job_type === 'workflow_job') {
+                        route = 'templates.editWorkflowJobTemplate.schedules.edit';
+                        stateParams.workflow_job_template_id = item.summary_fields.unified_job_template.id;
+                    } else if (item.summary_fields.unified_job_template.unified_job_type === 'inventory_update') {
+                        route = 'inventories.edit.inventory_sources.edit.schedules.edit';
+                        stateParams.inventory_id = item.summary_fields.inventory.id;
+                        stateParams.inventory_source_id = item.summary_fields.unified_job_template.id;
+                    } else if (item.summary_fields.unified_job_template.unified_job_type === 'system_job') {
+                        route = 'managementJobsList.schedule.edit';
+                        stateParams.id = item.summary_fields.unified_job_template.id;
                     }
                 }
-
+                itm.route = route;
+                itm.stateParams = stateParams;
+                itm.linkToDetails = `${route}(${JSON.stringify(stateParams)})`;
             });
         }
 
         function buildTooltips(schedule) {
             var job = schedule.summary_fields.unified_job_template;
             if (schedule.enabled) {
-                schedule.play_tip = 'Schedule is active. Click to stop.';
+                const tip = (schedule.summary_fields.user_capabilities.edit || $scope.credentialRequiresPassword) ? strings.get('list.SCHEDULE_IS_ACTIVE') : strings.get('list.SCHEDULE_IS_ACTIVE_CLICK_TO_STOP');
+                schedule.play_tip = tip;
                 schedule.status = 'active';
-                schedule.status_tip = 'Schedule is active. Click to stop.';
+                schedule.status_tip = tip;
             } else {
-                schedule.play_tip = 'Schedule is stopped. Click to activate.';
+                const tip = (schedule.summary_fields.user_capabilities.edit || $scope.credentialRequiresPassword) ? strings.get('list.SCHEDULE_IS_STOPPED') : strings.get('list.SCHEDULE_IS_STOPPED_CLICK_TO_STOP');//i18n._('Schedule is stopped.') : i18n._('Schedule is stopped. Click to activate.');
+                schedule.play_tip = tip;
                 schedule.status = 'stopped';
-                schedule.status_tip = 'Schedule is stopped. Click to activate.';
+                schedule.status_tip = tip;
             }
 
             schedule.nameTip = $filter('sanitize')(schedule.name);
@@ -126,7 +152,7 @@ export default [
                 schedule.nameTip += "job ";
             }
             schedule.nameTip += $filter('sanitize')(job.name);
-            schedule.nameTip += ". Click to edit schedule.";
+            schedule.nameTip += `. ${strings.get('list.CLICK_TO_EDIT')}`;
         }
 
         $scope.refreshSchedules = function() {
@@ -137,95 +163,13 @@ export default [
             if($state.current.name.endsWith('.edit')) {
                 $state.go('^.add');
             }
-            else if(!$state.current.name.endsWith('.add')) {
+            if(!$state.current.name.endsWith('.add')) {
                 $state.go('.add');
             }
         };
 
         $scope.editSchedule = function(schedule) {
-            if ($state.is('jobs.schedules')){
-                routeToScheduleForm(schedule, 'edit');
-            }
-            else {
-                if($state.current.name.endsWith('.add')) {
-                    $state.go('^.edit', { schedule_id: schedule.id });
-                }
-                else if($state.current.name.endsWith('.edit')) {
-                    $state.go('.', { schedule_id: schedule.id });
-                }
-                else {
-                    $state.go('.edit', { schedule_id: schedule.id });
-                }
-            }
-
-            function buildStateMap(schedule){
-
-                let deferred = $q.defer();
-
-                switch(schedule.summary_fields.unified_job_template.unified_job_type){
-                case 'job':
-                    deferred.resolve({
-                        name: 'jobTemplateSchedules.edit',
-                        params: {
-                            id: schedule.unified_job_template,
-                            schedule_id: schedule.id
-                        }
-                    });
-                    break;
-
-                    case 'workflow_job':
-                        deferred.resolve({
-                            name: 'workflowJobTemplateSchedules.edit',
-                            params: {
-                                id: schedule.unified_job_template,
-                                schedule_id: schedule.id
-                            }
-                        });
-                        break;
-
-                    case 'inventory_update':
-                        Rest.setUrl(schedule.related.unified_job_template);
-                        Rest.get().then( (res) => {
-                            deferred.resolve({
-                                name: 'inventories.edit.inventory_sources.edit.schedules.edit',
-                                params: {
-                                    inventory_source_id: res.data.id,
-                                    inventory_id: res.data.inventory,
-                                    schedule_id: schedule.id,
-                                }
-                            });
-                        });
-                        break;
-
-                    case 'project_update':
-                        deferred.resolve({
-                            name: 'projectSchedules.edit',
-                            params: {
-                                id: schedule.unified_job_template,
-                                schedule_id: schedule.id
-                            }
-                        });
-                        break;
-
-                    case 'system_job':
-                        deferred.resolve({
-                            name: 'managementJobsList.schedule.edit',
-                            params: {
-                                id: schedule.unified_job_template,
-                                schedule_id: schedule.id
-                            }
-                        });
-                        break;
-                }
-
-                return deferred.promise;
-            }
-
-            function routeToScheduleForm(schedule){
-                buildStateMap(schedule).then((state) =>{
-                    $state.go(state.name, state.params);
-                });
-            }
+            $state.go(schedule.route, schedule.stateParams);
         };
 
         $scope.toggleSchedule = function(event, id) {

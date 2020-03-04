@@ -13,8 +13,7 @@ export default {
         }
     },
     data: {
-        basePath: 'applications',
-        formChildState: true
+        basePath: 'applications'
     },
     ncyBreadcrumb: {
         skip: true
@@ -42,14 +41,18 @@ export default {
                 name: {
                     key: true,
                     label: 'Name',
-                    columnClass: 'col-lg-4 col-md-6 col-sm-8 col-xs-8',
+                    columnClass: 'col-sm-6',
                     awToolTip: '{{application.description | sanitize}}',
                     dataPlacement: 'top'
                 },
-            },
-            actions: {
-            },
-            fieldActions: {
+                organization: {
+                    label: 'Organization',
+                    columnClass: 'col-sm-6',
+                    key: false,
+                    ngBind: 'application.summary_fields.organization.name',
+                    sourceModel: 'organization',
+                    includeModal: true
+                }
             }
         })],
         Dataset: ['QuerySet', 'GetBasePath', '$stateParams', 'ListDefinition',

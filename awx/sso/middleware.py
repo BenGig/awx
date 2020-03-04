@@ -2,36 +2,34 @@
 # All Rights Reserved.
 
 # Python
-import urllib
-
-# Six
-import six
+import urllib.parse
 
 # Django
+from django.conf import settings
 from django.utils.functional import LazyObject
 from django.shortcuts import redirect
 
 # Python Social Auth
 from social_core.exceptions import SocialAuthBaseException
 from social_core.utils import social_logger
+from social_django import utils
 from social_django.middleware import SocialAuthExceptionMiddleware
 
 
 class SocialAuthMiddleware(SocialAuthExceptionMiddleware):
 
-    def process_view(self, request, callback, callback_args, callback_kwargs):
-        if request.path.startswith('/sso/login/'):
-            request.session['social_auth_last_backend'] = callback_kwargs['backend']
-
     def process_request(self, request):
+        if request.path.startswith('/sso'):
+            # See upgrade blocker note in requirements/README.md
+            utils.BACKENDS = settings.AUTHENTICATION_BACKENDS
         token_key = request.COOKIES.get('token', '')
-        token_key = urllib.quote(urllib.unquote(token_key).strip('"'))
+        token_key = urllib.parse.quote(urllib.parse.unquote(token_key).strip('"'))
 
         if not hasattr(request, 'successful_authenticator'):
             request.successful_authenticator = None
 
         if not request.path.startswith('/sso/') and 'migrations_notran' not in request.path:
-            if request.user and request.user.is_authenticated():
+            if request.user and request.user.is_authenticated:
                 # The rest of the code base rely hevily on type/inheritance checks,
                 # LazyObject sent from Django auth middleware can be buggy if not
                 # converted back to its original object.
@@ -39,6 +37,11 @@ class SocialAuthMiddleware(SocialAuthExceptionMiddleware):
                     request.user = request.user._wrapped
                 request.session.pop('social_auth_error', None)
                 request.session.pop('social_auth_last_backend', None)
+        return self.get_response(request)
+
+    def process_view(self, request, callback, callback_args, callback_kwargs):
+        if request.path.startswith('/sso/login/'):
+            request.session['social_auth_last_backend'] = callback_kwargs['backend']
 
     def process_exception(self, request, exception):
         strategy = getattr(request, 'social_strategy', None)
@@ -68,7 +71,7 @@ class SocialAuthMiddleware(SocialAuthExceptionMiddleware):
             return redirect(url)
 
     def get_message(self, request, exception):
-        msg = six.text_type(exception)
+        msg = str(exception)
         if msg and msg[-1] not in '.?!':
             msg = msg + '.'
         return msg

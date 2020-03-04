@@ -3,10 +3,10 @@ import pytest
 from awx.main.models.jobs import JobTemplate
 from awx.main.models import Inventory, CredentialType, Credential, Project
 from awx.main.models.workflow import (
-    WorkflowJobTemplate, WorkflowJobTemplateNode, WorkflowJobOptions,
+    WorkflowJobTemplate, WorkflowJobTemplateNode,
     WorkflowJob, WorkflowJobNode
 )
-import mock
+from unittest import mock
 
 
 @pytest.fixture
@@ -33,11 +33,11 @@ class TestWorkflowJobInheritNodesMixin():
         def test__create_workflow_job_nodes(self, mocker, job_template_nodes):
             workflow_job_node_create = mocker.patch('awx.main.models.WorkflowJobTemplateNode.create_workflow_job_node')
 
-            mixin = WorkflowJobOptions()
-            mixin._create_workflow_nodes(job_template_nodes)
+            workflow_job = WorkflowJob()
+            workflow_job._create_workflow_nodes(job_template_nodes)
 
             for job_template_node in job_template_nodes:
-                workflow_job_node_create.assert_any_call(workflow_job=mixin)
+                workflow_job_node_create.assert_any_call(workflow_job=workflow_job)
 
     class TestMapWorkflowJobNodes():
         @pytest.fixture
@@ -171,6 +171,7 @@ class TestWorkflowJobCreate:
         with mocker.patch('awx.main.models.WorkflowJobNode.objects.create', mock_create):
             wfjt_node_no_prompts.create_workflow_job_node(workflow_job=workflow_job_unit)
             mock_create.assert_called_once_with(
+                all_parents_must_converge=False,
                 extra_data={},
                 survey_passwords={},
                 char_prompts=wfjt_node_no_prompts.char_prompts,
@@ -185,6 +186,7 @@ class TestWorkflowJobCreate:
                 workflow_job=workflow_job_unit
             )
             mock_create.assert_called_once_with(
+                all_parents_must_converge=False,
                 extra_data={},
                 survey_passwords={},
                 char_prompts=wfjt_node_with_prompts.char_prompts,
@@ -234,6 +236,14 @@ class TestWorkflowJobNodeJobKWARGS:
         job_node_no_prompts.unified_job_template = project_unit
         assert job_node_no_prompts.get_job_kwargs() == self.kwargs_base
 
+    def test_extra_vars_node_prompts(self, wfjt_node_no_prompts):
+        wfjt_node_no_prompts.extra_vars = {'foo': 'bar'}
+        assert wfjt_node_no_prompts.prompts_dict() == {'extra_vars': {'foo': 'bar'}}
+
+    def test_string_extra_vars_node_prompts(self, wfjt_node_no_prompts):
+        wfjt_node_no_prompts.extra_vars = '{"foo": "bar"}'
+        assert wfjt_node_no_prompts.prompts_dict() == {'extra_vars': {'foo': 'bar'}}
+
 
 def test_get_ask_mapping_integrity():
-    assert WorkflowJobTemplate.get_ask_mapping().keys() == ['extra_vars']
+    assert list(WorkflowJobTemplate.get_ask_mapping().keys()) == ['extra_vars', 'inventory', 'limit', 'scm_branch']

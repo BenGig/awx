@@ -11,7 +11,7 @@ export default ['templateUrl', 'CreateDialog', 'Wait', '$state', '$window',
         return {
             scope: {
                 workflowJobTemplateObj: '=',
-                canAddWorkflowJobTemplate: '='
+                canAddOrEdit: '='
             },
             restrict: 'E',
             templateUrl: templateUrl('templates/workflows/workflow-maker/workflow-maker'),
@@ -62,11 +62,20 @@ export default ['templateUrl', 'CreateDialog', 'Wait', '$state', '$window',
                     scope.$broadcast("refreshWorkflowChart");
                 });
 
-                scope.closeDialog = function() {
-                    $('#workflow-modal-dialog').dialog('destroy');
-                    $('body').removeClass('WorkflowMaker-preventBodyScrolling');
+                scope.closeDialog = function(exitWithUnsavedChanges) {
+                    if (
+                        !scope.canAddOrEdit ||
+                        exitWithUnsavedChanges ||
+                        !(scope.workflowChangesUnsaved || scope.workflowChangesStarted)
+                    ) {
+                        scope.unsavedChangesVisible = false;
+                        $('#workflow-modal-dialog').dialog('destroy');
+                        $('body').removeClass('WorkflowMaker-preventBodyScrolling');
 
-                    $state.go('^');
+                        $state.go('^');
+                    } else {
+                        scope.unsavedChangesVisible = true;
+                    }
                 };
 
                 function onResize(){

@@ -1,9 +1,11 @@
 import pytest
-import mock
+from unittest import mock
 
 from awx.api.versioning import reverse
 from awx.main.utils import decrypt_field
-from awx.main.models.workflow import WorkflowJobTemplateNode
+from awx.main.models.workflow import (
+    WorkflowJobTemplate, WorkflowJobTemplateNode, WorkflowApprovalTemplate
+)
 from awx.main.models.jobs import JobTemplate
 from awx.main.tasks import deep_copy_model_obj
 
@@ -18,6 +20,8 @@ def test_job_template_copy(post, get, project, inventory, machine_credential, va
     job_template_with_survey_passwords.credentials.add(machine_credential)
     job_template_with_survey_passwords.credentials.add(vault_credential)
     job_template_with_survey_passwords.admin_role.members.add(alice)
+    project.admin_role.members.add(alice)
+    inventory.admin_role.members.add(alice)
     assert get(
         reverse('api:job_template_copy', kwargs={'pk': job_template_with_survey_passwords.pk}),
         alice, expect=200
@@ -26,21 +30,44 @@ def test_job_template_copy(post, get, project, inventory, machine_credential, va
         reverse('api:job_template_copy', kwargs={'pk': job_template_with_survey_passwords.pk}),
         admin, expect=200
     ).data['can_copy'] is True
+    assert post(
+        reverse('api:job_template_copy', kwargs={'pk': job_template_with_survey_passwords.pk}),
+        {'name': 'new jt name'}, alice, expect=403
+    ).data['detail'] == 'Insufficient access to Job Template credentials.'
     jt_copy_pk = post(
         reverse('api:job_template_copy', kwargs={'pk': job_template_with_survey_passwords.pk}),
         {'name': 'new jt name'}, admin, expect=201
     ).data['id']
-    jt_copy = type(job_template_with_survey_passwords).objects.get(pk=jt_copy_pk)
-    assert jt_copy.created_by == admin
-    assert jt_copy.name == 'new jt name'
-    assert jt_copy.project == project
-    assert jt_copy.inventory == inventory
-    assert jt_copy.playbook == job_template_with_survey_passwords.playbook
-    assert jt_copy.credentials.count() == 3
-    assert credential in jt_copy.credentials.all()
-    assert vault_credential in jt_copy.credentials.all()
-    assert machine_credential in jt_copy.credentials.all()
-    assert job_template_with_survey_passwords.survey_spec == jt_copy.survey_spec
+
+    # give credential access to user 'alice'
+    for c in (credential, machine_credential, vault_credential):
+        c.use_role.members.add(alice)
+        c.save()
+    assert get(
+        reverse('api:job_template_copy', kwargs={'pk': job_template_with_survey_passwords.pk}),
+        alice, expect=200
+    ).data['can_copy'] is True
+    jt_copy_pk_alice = post(
+        reverse('api:job_template_copy', kwargs={'pk': job_template_with_survey_passwords.pk}),
+        {'name': 'new jt name'}, alice, expect=201
+    ).data['id']
+
+    jt_copy_admin = type(job_template_with_survey_passwords).objects.get(pk=jt_copy_pk)
+    jt_copy_alice = type(job_template_with_survey_passwords).objects.get(pk=jt_copy_pk_alice)
+
+    assert jt_copy_admin.created_by == admin
+    assert jt_copy_alice.created_by == alice
+
+    for jt_copy in (jt_copy_admin, jt_copy_alice):
+        assert jt_copy.name == 'new jt name'
+        assert jt_copy.project == project
+        assert jt_copy.inventory == inventory
+        assert jt_copy.playbook == job_template_with_survey_passwords.playbook
+        assert jt_copy.credentials.count() == 3
+        assert credential in jt_copy.credentials.all()
+        assert vault_credential in jt_copy.credentials.all()
+        assert machine_credential in jt_copy.credentials.all()
+        assert job_template_with_survey_passwords.survey_spec == jt_copy.survey_spec
 
 
 @pytest.mark.django_db
@@ -52,6 +79,7 @@ def test_project_copy(post, get, project, organization, scm_credential, alice):
         reverse('api:project_copy', kwargs={'pk': project.pk}), alice, expect=200
     ).data['can_copy'] is False
     project.organization.admin_role.members.add(alice)
+    scm_credential.use_role.members.add(alice)
     assert get(
         reverse('api:project_copy', kwargs={'pk': project.pk}), alice, expect=200
     ).data['can_copy'] is True
@@ -150,6 +178,76 @@ def test_workflow_job_template_copy(workflow_job_template, post, get, admin, org
 
 
 @pytest.mark.django_db
+def test_workflow_approval_node_copy(workflow_job_template, post, get, admin, organization):
+    workflow_job_template.organization = organization
+    workflow_job_template.save()
+    ajts = [
+        WorkflowApprovalTemplate.objects.create(
+            name='test-approval-{}'.format(i),
+            description='description-{}'.format(i),
+            timeout=30
+        )
+        for i in range(0, 5)
+    ]
+    nodes = [
+        WorkflowJobTemplateNode.objects.create(
+            workflow_job_template=workflow_job_template, unified_job_template=ajts[i]
+        ) for i in range(0, 5)
+    ]
+    nodes[0].success_nodes.add(nodes[1])
+    nodes[1].success_nodes.add(nodes[2])
+    nodes[0].failure_nodes.add(nodes[3])
+    nodes[3].failure_nodes.add(nodes[4])
+    assert WorkflowJobTemplate.objects.count() == 1
+    assert WorkflowJobTemplateNode.objects.count() == 5
+    assert WorkflowApprovalTemplate.objects.count() == 5
+
+    with mock.patch('awx.api.generics.trigger_delayed_deep_copy') as deep_copy_mock:
+        wfjt_copy_id = post(
+            reverse('api:workflow_job_template_copy', kwargs={'pk': workflow_job_template.pk}),
+            {'name': 'new wfjt name'}, admin, expect=201
+        ).data['id']
+        wfjt_copy = type(workflow_job_template).objects.get(pk=wfjt_copy_id)
+        args, kwargs = deep_copy_mock.call_args
+        deep_copy_model_obj(*args, **kwargs)
+    assert wfjt_copy.organization == organization
+    assert wfjt_copy.created_by == admin
+    assert wfjt_copy.name == 'new wfjt name'
+
+    assert WorkflowJobTemplate.objects.count() == 2
+    assert WorkflowJobTemplateNode.objects.count() == 10
+    assert WorkflowApprovalTemplate.objects.count() == 10
+    original_templates = [
+        x.unified_job_template for x in workflow_job_template.workflow_job_template_nodes.all()
+    ]
+    copied_templates = [
+        x.unified_job_template for x in wfjt_copy.workflow_job_template_nodes.all()
+    ]
+
+    # make sure shallow fields like `timeout` are copied properly
+    for i, t in enumerate(original_templates):
+        assert t.timeout == 30
+        assert t.description == 'description-{}'.format(i)
+
+    for i, t in enumerate(copied_templates):
+        assert t.timeout == 30
+        assert t.description == 'description-{}'.format(i)
+
+    # the Approval Template IDs on the *original* WFJT should not match *any*
+    # of the Approval Template IDs on the *copied* WFJT
+    assert not set([x.id for x in original_templates]).intersection(
+        set([x.id for x in copied_templates])
+    )
+
+    # if you remove the " copy" suffix from the copied template names, they
+    # should match the original templates
+    assert (
+        set([x.name for x in original_templates]) ==
+        set([x.name.replace(' copy', '') for x in copied_templates])
+    )
+
+
+@pytest.mark.django_db
 def test_credential_copy(post, get, machine_credential, credentialtype_ssh, admin):
     assert get(
         reverse('api:credential_copy', kwargs={'pk': machine_credential.pk}), admin, expect=200
@@ -170,7 +268,7 @@ def test_credential_copy(post, get, machine_credential, credentialtype_ssh, admi
 @pytest.mark.django_db
 def test_notification_template_copy(post, get, notification_template_with_encrypt,
                                     organization, alice):
-    #notification_template_with_encrypt.admin_role.members.add(alice)
+    notification_template_with_encrypt.organization.auditor_role.members.add(alice)
     assert get(
         reverse(
             'api:notification_template_copy', kwargs={'pk': notification_template_with_encrypt.pk}
@@ -197,6 +295,7 @@ def test_notification_template_copy(post, get, notification_template_with_encryp
 
 @pytest.mark.django_db
 def test_inventory_script_copy(post, get, inventory_script, organization, alice):
+    inventory_script.organization.auditor_role.members.add(alice)
     assert get(
         reverse('api:inventory_script_copy', kwargs={'pk': inventory_script.pk}), alice, expect=200
     ).data['can_copy'] is False

@@ -14,7 +14,7 @@ import traceback
 from split_settings.tools import optional, include
 
 # Load default settings.
-from defaults import *  # NOQA
+from .defaults import *  # NOQA
 
 DEBUG = False
 TEMPLATE_DEBUG = DEBUG
@@ -52,24 +52,13 @@ AWX_VENV_PATH = os.path.join(BASE_VENV_PATH, "awx")
 
 AWX_ISOLATED_USERNAME = 'awx'
 
-LOGGING['handlers']['tower_warnings']['filename'] = '/var/log/tower/tower.log'
-LOGGING['handlers']['callback_receiver']['filename'] = '/var/log/tower/callback_receiver.log'
-LOGGING['handlers']['task_system']['filename'] = '/var/log/tower/task_system.log'
-LOGGING['handlers']['fact_receiver']['filename'] = '/var/log/tower/fact_receiver.log'
-LOGGING['handlers']['management_playbooks']['filename'] = '/var/log/tower/management_playbooks.log'
-LOGGING['handlers']['system_tracking_migrations']['filename'] = '/var/log/tower/tower_system_tracking_migrations.log'
-LOGGING['handlers']['rbac_migrations']['filename'] = '/var/log/tower/tower_rbac_migrations.log'
-
-# Supervisor service name dictionary used for programatic restart
-SERVICE_NAME_DICT = {
-    "beat": "awx-celery-beat",
-    "celery": "awx-celery",
-    "callback": "awx-callback-receiver",
-    "channels": "awx-channels-worker",
-    "uwsgi": "awx-uwsgi",
-    "daphne": "awx-daphne"}
-# Used for sending commands in automatic restart
-UWSGI_FIFO_LOCATION = '/var/lib/awx/awxfifo'
+LOGGING['handlers']['tower_warnings']['filename'] = '/var/log/tower/tower.log'  # noqa
+LOGGING['handlers']['callback_receiver']['filename'] = '/var/log/tower/callback_receiver.log'  # noqa
+LOGGING['handlers']['dispatcher']['filename'] = '/var/log/tower/dispatcher.log'  # noqa
+LOGGING['handlers']['task_system']['filename'] = '/var/log/tower/task_system.log'  # noqa
+LOGGING['handlers']['management_playbooks']['filename'] = '/var/log/tower/management_playbooks.log'  # noqa
+LOGGING['handlers']['system_tracking_migrations']['filename'] = '/var/log/tower/tower_system_tracking_migrations.log'  # noqa
+LOGGING['handlers']['rbac_migrations']['filename'] = '/var/log/tower/tower_rbac_migrations.log'  # noqa
 
 # Store a snapshot of default settings at this point before loading any
 # customizable config files.
@@ -105,7 +94,7 @@ except IOError:
         try:
             e = None
             open(settings_file)
-        except IOError as e:
+        except IOError:
             pass
         if e and e.errno == errno.EACCES:
             SECRET_KEY = 'permission-denied'
@@ -117,3 +106,12 @@ except IOError:
             raise ImproperlyConfigured(msg)
     else:
         raise
+
+
+CELERYBEAT_SCHEDULE.update({  # noqa
+    'isolated_heartbeat': {
+        'task': 'awx.main.tasks.awx_isolated_heartbeat',
+        'schedule': timedelta(seconds=AWX_ISOLATED_PERIODIC_CHECK),  # noqa
+        'options': {'expires': AWX_ISOLATED_PERIODIC_CHECK * 2},  # noqa
+    }
+})

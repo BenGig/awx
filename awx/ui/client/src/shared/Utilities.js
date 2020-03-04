@@ -78,7 +78,7 @@ angular.module('Utilities', ['RestServices', 'Utilities'])
             $('#alert2-modal-msg').html(msg);
 
             alertClass = (cls) ? cls : 'alert-danger'; //default alert class is alert-danger
-            local_backdrop = (backdrop === undefined) ? "static" : backdrop;
+            local_backdrop = (backdrop === undefined || backdrop === null) ? "static" : backdrop;
 
             $('#alert2-modal-msg').attr({ "class": "alert " + alertClass });
             $('#alert-modal2').modal({
@@ -89,9 +89,11 @@ angular.module('Utilities', ['RestServices', 'Utilities'])
             scope.disableButtons2 = (disableButtons) ? true : false;
 
             $('#alert-modal2').on('hidden.bs.modal', function() {
+                $(document).unbind('keydown');
                 if (action) {
                     action();
                 }
+                $('#alert-modal2').off();
             });
             $('#alert-modal2').on('shown.bs.modal', function() {
                 $('#alert2_ok_btn').focus();
@@ -107,7 +109,7 @@ angular.module('Utilities', ['RestServices', 'Utilities'])
             $('#alertHeader').html(hdr);
             $('#alert-modal-msg').html(msg);
             alertClass = (cls) ? cls : 'alert-danger'; //default alert class is alert-danger
-            local_backdrop = (backdrop === undefined) ? "static" : backdrop;
+            local_backdrop = (backdrop === undefined || backdrop === null) ? "static" : backdrop;
 
             $('#alert-modal-msg').attr({ "class": "alert " + alertClass });
             $('#alert-modal').modal({
@@ -117,10 +119,12 @@ angular.module('Utilities', ['RestServices', 'Utilities'])
             });
 
             $('#alert-modal').on('hidden.bs.modal', function() {
+                $(document).unbind('keydown');
                 if (action) {
                     action();
                 }
                 $('.modal-backdrop').remove();
+                $('#alert-modal').off();
             });
             $('#alert-modal').on('shown.bs.modal', function() {
                 $('#alert_ok_btn').focus();
@@ -165,8 +169,7 @@ angular.module('Utilities', ['RestServices', 'Utilities'])
                 Alert('Conflict', data.conflict || "Resource currently in use.");
             } else if (status === 410) {
                 Alert('Deleted Object', 'The requested object was previously deleted and can no longer be accessed.');
-            } else if ((status === 'Session is expired') || (status === 401 && data.detail && data.detail === 'Token is expired') ||
-                (status === 401 && data && data.detail && data.detail === 'Invalid token')) {
+            } else if ((status === 'Session is expired') || (status === 401)) {
                 if ($rootScope.sessionTimer) {
                     $rootScope.sessionTimer.expireSession('idle');
                 }
@@ -183,53 +186,67 @@ angular.module('Utilities', ['RestServices', 'Utilities'])
                 }
             } else if (form) { //if no error code is detected it begins to loop through to see where the api threw an error
                 fieldErrors = false;
-                for (field in form.fields) {
-                    if (data[field] && form.fields[field].tab) {
+
+                const addApiErrors = (field, fld) => {
+                    if (data[fld] && field.tab) {
                         // If the form is part of a tab group, activate the tab
-                        $('#' + form.name + "_tabs a[href=\"#" + form.fields[field].tab + '"]').tab('show');
+                        $('#' + form.name + "_tabs a[href=\"#" + field.tab + '"]').tab('show');
                     }
-                    if (form.fields[field].realName) {
-                        if (data[form.fields[field].realName]) {
-                            scope[field + '_api_error'] = data[form.fields[field].realName][0];
+                    if (field.realName) {
+                        if (field.realName) {
+                            scope[fld + '_api_error'] = data[field.realName][0];
                             //scope[form.name + '_form'][form.fields[field].realName].$setValidity('apiError', false);
-                            $('[name="' + form.fields[field].realName + '"]').addClass('ng-invalid');
-                            $('html, body').animate({scrollTop: $('[name="' + form.fields[field].realName + '"]').offset().top}, 0);
+                            $('[name="' + field.realName + '"]').addClass('ng-invalid');
+                            $('html, body').animate({scrollTop: $('[name="' + field.realName + '"]').offset().top}, 0);
                             fieldErrors = true;
                         }
                     }
-                    if (form.fields[field].sourceModel) {
-                        if (data[field]) {
-                            scope[form.fields[field].sourceModel + '_' + form.fields[field].sourceField + '_api_error'] =
-                                data[field][0];
+                    if (field.sourceModel) {
+                        if (data[fld]) {
+                            scope[field.sourceModel + '_' + field.sourceField + '_api_error'] =
+                                data[fld][0];
                             //scope[form.name + '_form'][form.fields[field].sourceModel + '_' + form.fields[field].sourceField].$setValidity('apiError', false);
-                            $('[name="' + form.fields[field].sourceModel + '_' + form.fields[field].sourceField + '"]').addClass('ng-invalid');
-                            $('[name="' + form.fields[field].sourceModel + '_' + form.fields[field].sourceField + '"]').ScrollTo({ "onlyIfOutside": true, "offsetTop": 100 });
+                            $('[name="' + field.sourceModel + '_' + field.sourceField + '"]').addClass('ng-invalid');
+                            $('[name="' + field.sourceModel + '_' + field.sourceField + '"]').ScrollTo({ "onlyIfOutside": true, "offsetTop": 100 });
                             fieldErrors = true;
                         }
                     } else {
-                        if (data[field]) {
-                            scope[field + '_api_error'] = data[field][0];
-                            //scope[form.name + '_form'][field].$setValidity('apiError', false);
-                            $('[name="' + field + '"]').addClass('ng-invalid');
-                            $('html, body').animate({scrollTop: $('[name="' + field + '"]').offset().top}, 0);
+                        if (data[fld]) {
+                            scope[fld + '_api_error'] = data[fld][0];
+                            $('[name="' + fld + '"]').addClass('ng-invalid');
+                            $('label[for="' + fld + '"] span').addClass('error-color');
+                            $('html, body').animate({scrollTop: $('[name="' + fld + '"]').offset().top}, 0);
                             fieldErrors = true;
+                            if(field.codeMirror){
+                                $(`#cm-${fld}-container .CodeMirror`).addClass('error-border');
+                            }
                         }
                     }
+                };
+
+                for (field in form.fields) {
+                    if (form.fields[field].type === "checkbox_group") {
+                        form.fields[field].fields.forEach(fld => {
+                            addApiErrors(fld, fld.name);
+                        });
+                    } else {
+                        addApiErrors(form.fields[field], field);
+                    }
                 }
-                if ((!fieldErrors) && defaultMsg) {
+                if (!fieldErrors && defaultMsg) {
                     Alert(defaultMsg.hdr, defaultMsg.msg);
                 }
             } else if (typeof data === 'object' && data !== null) {
                 if (Object.keys(data).length > 0) {
                     keys = Object.keys(data);
-                    if (Array.isArray(data[keys[0]])) {
-                        msg = data[keys[0]][0];
-                    } else {
-                        msg = "";
-                        _.forOwn(data, function(value, key) {
-                            msg += `${key} : ${value} `;
-                        });
-                    }
+                    msg = "";
+                    _.forOwn(data, function(value, key) {
+                        if (Array.isArray(data[key])) {
+                            msg += `${key.toUpperCase()}: ${data[key][0]}`;
+                        } else {
+                            msg += `${key.toUpperCase()}: ${value} `;
+                        }
+                    });
                     Alert(defaultMsg.hdr, msg);
                 } else {
                     Alert(defaultMsg.hdr, defaultMsg.msg);
@@ -577,8 +594,8 @@ angular.module('Utilities', ['RestServices', 'Utilities'])
  * ]
  * ```
  */
-.factory('CreateSelect2', ['$filter',
-        function($filter) {
+.factory('CreateSelect2', ['$filter', '$q',
+        function($filter, $q) {
             return function(params) {
 
                 var element = params.element,
@@ -591,10 +608,11 @@ angular.module('Utilities', ['RestServices', 'Utilities'])
                     selectOptions = params.options,
                     model = params.model,
                     original_options,
-                    minimumResultsForSearch = params.minimumResultsForSearch ? params.minimumResultsForSearch : Infinity;
+                    minimumResultsForSearch = params.minimumResultsForSearch ? params.minimumResultsForSearch : Infinity,
+                    defer = $q.defer();
 
                     if (scope && selectOptions) {
-                        original_options = _.cloneDeep(scope[selectOptions]);
+                        original_options = _.get(scope, selectOptions);
                     }
 
                 $.fn.select2.amd.require([
@@ -673,13 +691,16 @@ angular.module('Utilities', ['RestServices', 'Utilities'])
 
                     if (addNew && !multiple) {
                         $(element).on('select2:select', (e) => {
-                            scope[model] = e.params.data.text;
-                            scope[selectOptions] = _.cloneDeep(original_options);
+                            _.set(scope, model, e.params.data.text);
+                            const optionsClone = _.clone(original_options);
+                            _.set(scope, selectOptions, optionsClone);
                             if (e.params.data.id === "") {
                                 return;
                             }
-                            if (scope[selectOptions].indexOf(e.params.data.text) === -1) {
-                                scope[selectOptions].push(e.params.data.text);
+                            const optionMatches = original_options.findIndex((option) => option === e.params.data.text);
+                            if (optionMatches === -1) {
+                                optionsClone.push(e.params.data.text);
+                                _.set(scope, selectOptions, optionsClone);
                             }
                             $(element).select2(config);
                         });
@@ -698,8 +719,10 @@ angular.module('Utilities', ['RestServices', 'Utilities'])
 
                         $(element).trigger('change');
                     }
-
+                    defer.resolve("select2 loaded");
                 });
+
+                return defer.promise;
             };
         }
     ])

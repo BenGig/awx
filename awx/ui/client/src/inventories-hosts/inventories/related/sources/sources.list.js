@@ -15,27 +15,31 @@
         hover: true,
         trackBy: 'inventory_source.id',
         basePath:  'api/v2/inventories/{{$stateParams.inventory_id}}/inventory_sources/',
+        layoutClass: 'List-staticColumnLayout--statusOrCheckbox',
+        staticColumns: [
+            {
+                field: 'sync_status',
+                content: {
+                    label: '',
+                    nosort: true,
+                    mode: 'all',
+                    iconOnly: true,
+                    ngClick: 'viewUpdateStatus(inventory_source.id)',
+                    awToolTip: "{{ inventory_source.status_tooltip }}",
+                    dataTipWatch: "inventory_source.status_tooltip",
+                    icon: "{{ 'fa icon-cloud-' + inventory_source.status_class }}",
+                    ngClass: "inventory_source.status_class",
+                    dataPlacement: "top",
+                }
+            }
+        ],
 
         fields: {
-            sync_status: {
-                label: '',
-                nosort: true,
-                mode: 'all',
-                iconOnly: true,
-                ngClick: 'viewUpdateStatus(inventory_source.id)',
-                awToolTip: "{{ inventory_source.status_tooltip }}",
-                dataTipWatch: "inventory_source.status_tooltip",
-                icon: "{{ 'fa icon-cloud-' + inventory_source.status_class }}",
-                ngClass: "inventory_source.status_class",
-                dataPlacement: "top",
-                columnClass: 'status-column List-staticColumn--smallStatus'
-            },
             name: {
                 label: i18n._('Sources'),
                 key: true,
                 uiSref: "inventories.edit.inventory_sources.edit({inventory_source_id:inventory_source.id})",
                 columnClass: 'col-lg-4 col-md-4 col-sm-4 col-xs-4',
-                class: 'InventoryManage-breakWord',
             },
             source: {
                 label: i18n._('Type'),
@@ -66,8 +70,8 @@
                 mode: 'all',
                 ngClick: "createSource()",
                 awToolTip: i18n._("Create a new source"),
-                actionClass: 'btn List-buttonSubmit',
-                buttonContent: '&#43; ' + i18n._('ADD SOURCE'),
+                actionClass: 'at-Button--add',
+                actionId: 'button-add',
                 ngShow: 'canAdd',
                 dataPlacement: "top",
             }
@@ -77,6 +81,13 @@
 
             columnClass: 'col-lg-4 col-md-4 col-sm-4 col-xs-4 text-right',
 
+            edit: {
+                mode: 'all',
+                ngClick: "editSource(inventory_source.id)",
+                awToolTip: i18n._('Edit source'),
+                dataPlacement: "top",
+                ngShow: "inventory_source.summary_fields.user_capabilities.edit"
+            },
             source_update: {
                 mode: 'all',
                 ngClick: 'updateSource(inventory_source)',
@@ -96,21 +107,6 @@
                     "|| inventory_source.status == 'updating') && inventory_source.summary_fields.user_capabilities.start",
                 dataPlacement: "top",
                 iconClass: "fa fa-minus-circle"
-            },
-            schedule: {
-                mode: 'all',
-                ngClick: "scheduleSource(inventory_source.id)",
-                awToolTip: "{{ inventory_source.group_schedule_tooltip }}",
-                ngClass: "inventory_source.scm_type_class",
-                dataPlacement: 'top',
-                ngShow: "!(inventory_source.summary_fields.inventory_source.source === '') && inventory_source.summary_fields.user_capabilities.schedule"
-            },
-            edit: {
-                mode: 'all',
-                ngClick: "editSource(inventory_source.id)",
-                awToolTip: i18n._('Edit source'),
-                dataPlacement: "top",
-                ngShow: "inventory_source.summary_fields.user_capabilities.edit"
             },
             view: {
                 mode: 'all',

@@ -1,6 +1,6 @@
 <div ui-view="form"></div>
 <div class="tab-pane" id="organizations">
-    <div ng-cloak id="htmlTemplate" class="Panel">
+    <div ng-cloak id="htmlTemplate" class="card at-Panel">
         <div class="List-header">
             <div class="List-title">
                 <div class="List-titleText" translate>
@@ -16,24 +16,14 @@
         <div class="List-well">
             <div class="List-actionHolder">
                 <div class="List-actions">
-                    <!-- &#43; ADD -->
-                    <button class="btn List-buttonSubmit"
+                    <button class="at-Button--add"
+                        id="button-add"
                         aw-tool-tip="{{'Create a new organization'|translate}}"
                         ng-show="canAdd"
-                        ng-click="addOrganization()" translate>
-                        + ADD
+                        ng-click="addOrganization()">
                     </button>
                 </div>
             </div>
-            <!-- smart-search directive bindings:
-                djangoModel: '@', // one-way, interpolated
-                basePath: '@',
-                iterator: '@',
-                dataset: '=', // two-way
-                list: '=',
-                collection: '=',
-                searchTags: '=',
-            -->
             <smart-search
                 django-model="organizations"
                 base-path="organizations"
@@ -93,24 +83,19 @@
                                 {{ link.count }}
                             </span>
                             <a class="OrgCards-linkName"
-                                ng-href="{{ link.href }}">
+                                ui-sref="{{ link.sref }}"
+                                ui-sref-opts="{{ link.srefOpts }}">
                                 {{ link.name }}
                             </a>
                         </div>
                     </div>
                 </div>
             </div>
-            <!-- paginate directive bindings
-                collection: '=', // two-way
-                dataset: '=',
-                iterator: '@', // one-way, interpolated
-                basePath: '@'
-            -->
             <paginate
                     base-path="organizations"
                     iterator="organization"
                     dataset="organization_dataset"
-                    collection="organization">
+                    collection="organizations">
             </paginate>
         </div>
     </div>

@@ -86,7 +86,11 @@ function($injector, $stateExtender, $log, i18n) {
                         });
                         html = generateList.wrapPanel(html);
                         // generateList.formView() inserts a ui-view="form" inside the list view's hierarchy
-                        return generateList.insertFormView() + html;
+                        html = generateList.insertFormView() + html;
+                        if(params.generateSchedulerView){
+                            html = generateList.insertSchedulerView() + html;
+                        }
+                        return html;
                     };
                 }
             }
@@ -205,9 +209,10 @@ function($injector, $stateExtender, $log, i18n) {
                             FormDefinition: [params.form, function(definition) {
                                 return definition;
                             }],
-                            resourceData: ['FormDefinition', 'Rest', '$stateParams', 'GetBasePath',
-                                function(FormDefinition, Rest, $stateParams, GetBasePath) {
+                            resourceData: ['FormDefinition', 'Rest', '$stateParams', 'GetBasePath', '$q', 'ProcessErrors',
+                                function(FormDefinition, Rest, $stateParams, GetBasePath, $q, ProcessErrors) {
                                     let form, path;
+                                    let deferred = $q.defer();
                                     form = typeof(FormDefinition) === 'function' ?
                                         FormDefinition() : FormDefinition;
                                     if (GetBasePath(form.basePath) === undefined && GetBasePath(form.stateTree) === undefined ){
@@ -217,7 +222,18 @@ function($injector, $stateExtender, $log, i18n) {
                                         path = (GetBasePath(form.basePath) || GetBasePath(form.stateTree) || form.basePath) + $stateParams[`${form.name}_id`];
                                     }
                                     Rest.setUrl(path);
-                                    return Rest.get();
+                                    Rest.get()
+                                        .then((response) => deferred.resolve(response))
+                                        .catch(({ data, status }) => {
+                                            ProcessErrors(null, data, status, null,
+                                                {
+                                                    hdr: i18n._('Error!'),
+                                                    msg: i18n._('Unable to get resource: ') + status
+                                                }
+                                            );
+                                            deferred.reject();
+                                        });
+                                    return deferred.promise;
                                 }
                             ]
                         },
@@ -565,30 +581,45 @@ function($injector, $stateExtender, $log, i18n) {
 
                 states.push($stateExtender.buildDefinition({
                     name: `${formStateDefinition.name}.users.add`,
-                    squashSearchUrl: true,
                     url: '/add-user',
+                    searchPrefix: 'add_user',
                     params: {
-                        user_search: {
+                        add_user_search: {
                             value: { order_by: 'username', page_size: '5' },
-                            dynamic: true,
+                            dynamic: true
                         }
                     },
                     views: {
                         [`modal@${formStateDefinition.name}`]: {
-                            template: `<add-rbac-resource users-dataset="$resolve.usersDataset" selected="allSelected" resource-data="$resolve.resourceData" without-team-permissions="true" title="` + i18n._('Add Users') + `"></add-rbac-resource>`
+                            template: `<add-rbac-resource default-params="$resolve.defaultParams" users-dataset="$resolve.usersDataset" selected="allSelected" resource-data="$resolve.resourceData" without-team-permissions="true" title="` + i18n._('Add Users') + `" only-member-role="true" query-prefix="add_user"></add-rbac-resource>`
                         }
                     },
                     ncyBreadcrumb:{
                         skip:true
                     },
                     resolve: {
-                        usersDataset: ['addPermissionsUsersList', 'QuerySet', '$stateParams', 'GetBasePath',
-                            function(list, qs, $stateParams, GetBasePath) {
+                        roleToExclude: ['$stateParams', 'Rest', 'GetBasePath', 'i18n', function($stateParams, Rest, GetBasePath, i18n) {
+                                const basePath = ($stateParams.team_id) ? GetBasePath('teams') + `${$stateParams.team_id}/object_roles` :
+                                    GetBasePath('organizations') + `${$stateParams.organization_id}/object_roles`;
+                                Rest.setUrl(basePath);
+                                return Rest.get().then(({data}) => {
+                                    return data.results
+                                        .filter(({name}) => name === i18n._('Member'))
+                                        .map(({id}) => id)[0];
+                                });
+                        }],
+                        usersDataset: ['addPermissionsUsersList', 'QuerySet', '$stateParams', 'GetBasePath', 'roleToExclude',
+                            function(list, qs, $stateParams, GetBasePath, roleToExclude) {
                                 let path = GetBasePath(list.basePath) || GetBasePath(list.name);
-                                return qs.search(path, $stateParams.user_search);
-
+                                if (roleToExclude) {
+                                    $stateParams.add_user_search.not__roles = roleToExclude;
+                                }
+                                return qs.search(path, $stateParams.add_user_search);
                             }
-                        ]
+                        ],
+                        defaultParams: ['$stateParams', 'usersDataset', function($stateParams) {
+                            return $stateParams.add_user_search;
+                        }]
                     },
                     onExit: function($state) {
                         if ($state.transition) {
@@ -728,10 +759,20 @@ function($injector, $stateExtender, $log, i18n) {
                 // search will think they need to be set as search tags.
                 var params;
                 if(field.sourceModel === "organization"){
-                    params = {
-                        page_size: '5',
-                        role_level: 'admin_role'
-                    };
+                    if (form.name === "notification_template") {
+                        // Users with admin_role role level should also have
+                        // notification_admin_role so this should handle regular admin
+                        // users as well as notification admin users
+                        params = {
+                            page_size: '5',
+                            role_level: 'notification_admin_role'
+                        };
+                    } else {
+                        params = {
+                            page_size: '5',
+                            role_level: 'admin_role'
+                        };
+                    }
                 }
                 else if(field.sourceModel === "inventory_script"){
                     params = {
@@ -780,13 +821,19 @@ function($injector, $stateExtender, $log, i18n) {
                     views: {
                         'modal': {
                             templateProvider: function(ListDefinition, generateList) {
-                                let list_html = generateList.build({
+                                const listConfig = {
                                     mode: 'lookup',
                                     list: ListDefinition,
                                     input_type: 'radio'
-                                });
-                                return `<lookup-modal>${list_html}</lookup-modal>`;
+                                };
 
+                                if (field.lookupMessage) {
+                                    listConfig.lookupMessage = field.lookupMessage;
+                                }
+
+                                let list_html = generateList.build(listConfig);
+
+                                return `<lookup-modal>${list_html}</lookup-modal>`;
                             }
                         }
                     },
@@ -848,7 +895,13 @@ function($injector, $stateExtender, $log, i18n) {
                                 // Need to change the role_level here b/c organizations and inventory scripts
                                 // don't have a "use_role", only "admin_role" and "read_role"
                                 if(list.iterator === "organization"){
-                                    $stateParams[`${list.iterator}_search`].role_level = "admin_role";
+                                    if ($state.current.name.includes('inventories')) {
+                                        $stateParams[`${list.iterator}_search`].role_level = "inventory_admin_role";
+                                    } else if ($state.current.name.includes('projects')) {
+                                        $stateParams[`${list.iterator}_search`].role_level = "project_admin_role";
+                                    } else if ($state.current.name.includes('templates.addWorkflowJobTemplate') || $state.current.name.includes('templates.editWorkflowJobTemplate')) {
+                                        $stateParams[`${list.iterator}_search`].role_level = "workflow_admin_role";
+                                    }
                                 }
                                 if(list.iterator === "inventory_script"){
                                     $stateParams[`${list.iterator}_search`].role_level = "admin_role";
@@ -858,7 +911,11 @@ function($injector, $stateExtender, $log, i18n) {
                                     $stateParams[`${list.iterator}_search`].role_level = "admin_role";
                                     $stateParams[`${list.iterator}_search`].credential_type = InsightsCredTypePK.toString() ;
                                 }
-
+                                if(list.iterator === 'credential') {
+                                    if($state.current.name.includes('projects.edit') || $state.current.name.includes('projects.add')) {
+                                        state.params[`${list.iterator}_search`].value = _.merge(state.params[`${list.iterator}_search`].value, $stateParams[`${list.iterator}_search`]);
+                                    }
+                                }
 
                                 return qs.search(path, $stateParams[`${list.iterator}_search`]);
                             }

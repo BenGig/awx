@@ -22,7 +22,7 @@
 
 from __future__ import print_function
 import argparse
-import ConfigParser
+from ansible.module_utils.six.moves import configparser as ConfigParser
 import os
 import re
 from time import time
@@ -138,7 +138,7 @@ class CloudFormsInventory(object):
             warnings.warn("No username specified, you need to specify a CloudForms username.")
 
         if config.has_option('cloudforms', 'password'):
-            self.cloudforms_pw = config.get('cloudforms', 'password')
+            self.cloudforms_pw = config.get('cloudforms', 'password', raw=True)
         else:
             self.cloudforms_pw = None
 

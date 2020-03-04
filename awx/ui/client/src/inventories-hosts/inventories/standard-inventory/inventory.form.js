@@ -10,25 +10,8 @@
  * @description This form is for adding/editing an inventory
  */
 
-export default ['i18n', 'InventoryCompletedJobsList',
-function(i18n, InventoryCompletedJobsList) {
-
-    var completed_jobs_object = {
-        name: 'completed_jobs',
-        index: false,
-        basePath: "unified_jobs",
-        include: "InventoryCompletedJobsList",
-        title: i18n._('Completed Jobs'),
-        iterator: 'completed_job',
-        generateList: true,
-        skipGenerator: true,
-        search: {
-            "or__job__inventory": ''
-        }
-    };
-    let clone = _.clone(InventoryCompletedJobsList);
-    completed_jobs_object = angular.extend(clone, completed_jobs_object);
-
+export default ['i18n',
+function(i18n) {
     return {
 
         addTitle: i18n._('NEW INVENTORY'),
@@ -83,17 +66,12 @@ function(i18n, InventoryCompletedJobsList) {
                 dataContainer: 'body',
                 control: '<instance-groups-multiselect instance-groups="instance_groups" field-is-disabled="!(inventory_obj.summary_fields.user_capabilities.edit || canAdd)"></instance-groups-multiselect>',
             },
-            inventory_variables: {
-                realName: 'variables',
+            variables: {
                 label: i18n._('Variables'),
-                type: 'textarea',
+                type: 'code_mirror',
                 class: 'Form-formGroup--fullWidth',
-                rows: 6,
-                "default": "---",
+                variables: 'variables',
                 awPopOver: i18n._('Enter inventory variables using either JSON or YAML syntax. Use the radio button to toggle between the two. Refer to the Ansible Tower documentation for example syntax.'),
-                dataTitle: i18n._('Variables'),
-                dataPlacement: 'right',
-                dataContainer: 'body',
                 ngDisabled: '!(inventory_obj.summary_fields.user_capabilities.edit || canAdd)' // TODO: get working
             }
         },
@@ -132,8 +110,8 @@ function(i18n, InventoryCompletedJobsList) {
                         label: i18n._('Add'),
                         ngClick: "$state.go('.add')",
                         awToolTip: i18n._('Add a permission'),
-                        actionClass: 'btn List-buttonSubmit',
-                        buttonContent: '&#43; ADD',
+                        actionClass: 'at-Button--add',
+                        actionId: 'button-add',
                         ngShow: '(inventory_obj.summary_fields.user_capabilities.edit || canAdd)'
 
                     }
@@ -143,19 +121,19 @@ function(i18n, InventoryCompletedJobsList) {
                         key: true,
                         label: i18n._('User'),
                         linkBase: 'users',
-                        class: 'col-lg-3 col-md-3 col-sm-3 col-xs-4'
+                        columnClass: 'col-sm-3 col-xs-4'
                     },
                     role: {
                         label: i18n._('Role'),
                         type: 'role',
                         nosort: true,
-                        class: 'col-lg-4 col-md-4 col-sm-4 col-xs-4',
+                        columnClass: 'col-sm-4 col-xs-4'
                     },
                     team_roles: {
                         label: i18n._('Team Roles'),
                         type: 'team_roles',
                         nosort: true,
-                        class: 'col-lg-5 col-md-5 col-sm-5 col-xs-4',
+                        columnClass: 'col-sm-5 col-xs-4'
                     }
                 }
             },
@@ -166,6 +144,7 @@ function(i18n, InventoryCompletedJobsList) {
                 include: "GroupList",
                 title: i18n._('Groups'),
                 iterator: 'group',
+                tabSelected: `$state.includes('inventories.edit.groups') || $state.includes('inventories.edit.rootGroups')`,
                 skipGenerator: true
             },
             hosts: {
@@ -185,12 +164,15 @@ function(i18n, InventoryCompletedJobsList) {
                 iterator: 'inventory_source',
                 skipGenerator: true
             },
-            completed_jobs: completed_jobs_object
+            completed_jobs: {
+                title: i18n._('Completed Jobs'),
+                skipGenerator: true
+            }
         },
         relatedButtons: {
             remediate_inventory: {
                 ngClick: 'remediateInventory(id, insights_credential)',
-                ngShow: 'is_insights && mode !== "add" && canRemediate',
+                ngShow: "is_insights && mode !== 'add' && canRemediate && ($state.is('inventories.edit') || $state.is('inventories.edit.hosts'))",
                 label: i18n._('Remediate Inventory'),
                 class: 'Form-primaryButton'
             }

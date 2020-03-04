@@ -7,7 +7,8 @@ export default {
     params: {
         credential_search: {
             value: {
-                page_size: '5'
+                page_size: '5',
+                credential_type: null
             },
             squash: true,
             dynamic: true
@@ -30,9 +31,8 @@ export default {
         }
     },
     resolve: {
-        ListDefinition: ['CredentialList', 'i18n', function(CredentialList, i18n) {
+        ListDefinition: ['CredentialList', function(CredentialList) {
             let list = _.cloneDeep(CredentialList);
-            list.lookupConfirmText = i18n._('SELECT');
             return list;
         }],
         Dataset: ['ListDefinition', 'QuerySet', '$stateParams', 'GetBasePath',

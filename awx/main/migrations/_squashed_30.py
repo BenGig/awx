@@ -30,7 +30,7 @@ SQUASHED_30 = {
         migrations.AddField(
             model_name='job',
             name='survey_passwords',
-            field=jsonfield.fields.JSONField(default={}, editable=False, blank=True),
+            field=jsonfield.fields.JSONField(default=dict, editable=False, blank=True),
         ),
     ],
     '0031_v302_migrate_survey_passwords': [
@@ -42,12 +42,12 @@ SQUASHED_30 = {
         migrations.AlterField(
             model_name='credential',
             name='admin_role',
-            field=awx.main.fields.ImplicitRoleField(related_name='+', parent_role=[b'singleton:system_administrator', b'organization.admin_role'], to='main.Role', null=b'True'),
+            field=awx.main.fields.ImplicitRoleField(related_name='+', parent_role=['singleton:system_administrator', 'organization.admin_role'], to='main.Role', null='True'),
         ),
         migrations.AlterField(
             model_name='credential',
             name='use_role',
-            field=awx.main.fields.ImplicitRoleField(related_name='+', parent_role=[b'admin_role'], to='main.Role', null=b'True'),
+            field=awx.main.fields.ImplicitRoleField(related_name='+', parent_role=['admin_role'], to='main.Role', null='True'),
         ),
     ],
     '0033_v303_v245_host_variable_fix': [

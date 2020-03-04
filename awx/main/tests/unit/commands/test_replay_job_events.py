@@ -3,7 +3,7 @@
 
 # Python
 import pytest
-import mock
+from unittest import mock
 from datetime import timedelta
 
 # Django
@@ -55,11 +55,12 @@ class TestReplayJobEvents():
         r.get_serializer = lambda self: mock_serializer_fn
         r.get_job = mocker.MagicMock(return_value=Job(id=3))
         r.sleep = mocker.MagicMock()
-        r.get_job_events = lambda self: job_events
+        r.get_job_events = lambda self: (job_events, len(job_events))
         r.replay_offset = lambda *args, **kwarg: 0
+        r.emit_job_status = lambda job, status: True
         return r
 
-    @mock.patch('awx.main.management.commands.replay_job_events.emit_channel_notification', lambda *a, **kw: None)
+    @mock.patch('awx.main.management.commands.replay_job_events.emit_event_detail', lambda *a, **kw: None)
     def test_sleep(self, mocker, replayer):
         replayer.run(3, 1)
 
@@ -73,7 +74,7 @@ class TestReplayJobEvents():
             mock.call(0.000001),
         ])
 
-    @mock.patch('awx.main.management.commands.replay_job_events.emit_channel_notification', lambda *a, **kw: None)
+    @mock.patch('awx.main.management.commands.replay_job_events.emit_event_detail', lambda *a, **kw: None)
     def test_speed(self, mocker, replayer):
         replayer.run(3, 2)
 

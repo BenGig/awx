@@ -4,10 +4,12 @@
 import sys
 import time
 import json
+import random
 
 from django.utils import timezone
 from django.core.management.base import BaseCommand
 
+from awx.main.models.events import emit_event_detail
 from awx.main.models import (
     UnifiedJob,
     Job,
@@ -16,17 +18,23 @@ from awx.main.models import (
     InventoryUpdate,
     SystemJob
 )
-from awx.main.consumers import emit_channel_notification
-from awx.api.serializers import (
-    JobEventWebSocketSerializer,
-    AdHocCommandEventWebSocketSerializer,
-    ProjectUpdateEventWebSocketSerializer,
-    InventoryUpdateEventWebSocketSerializer,
-    SystemJobEventWebSocketSerializer
-)
 
 
-class ReplayJobEvents():
+class JobStatusLifeCycle():
+    def emit_job_status(self, job, status):
+        # {"status": "successful", "project_id": 13, "unified_job_id": 659, "group_name": "jobs"}
+        job.websocket_emit_status(status)
+
+    def determine_job_event_finish_status_index(self, job_event_count, random_seed):
+        if random_seed == 0:
+            return job_event_count - 1
+
+        random.seed(random_seed)
+        job_event_index = random.randint(0, job_event_count - 1)
+        return job_event_index
+
+
+class ReplayJobEvents(JobStatusLifeCycle):
 
     recording_start = None
     replay_start = None
@@ -76,26 +84,12 @@ class ReplayJobEvents():
             job_events = job.inventory_update_events.order_by('created')
         elif type(job) is SystemJob:
             job_events = job.system_job_events.order_by('created')
-        if job_events.count() == 0:
+        count = job_events.count()
+        if count == 0:
             raise RuntimeError("No events for job id {}".format(job.id))
-        return job_events
+        return job_events, count
 
-    def get_serializer(self, job):
-        if type(job) is Job:
-            return JobEventWebSocketSerializer
-        elif type(job) is AdHocCommand:
-            return AdHocCommandEventWebSocketSerializer
-        elif type(job) is ProjectUpdate:
-            return ProjectUpdateEventWebSocketSerializer
-        elif type(job) is InventoryUpdate:
-            return InventoryUpdateEventWebSocketSerializer
-        elif type(job) is SystemJob:
-            return SystemJobEventWebSocketSerializer
-        else:
-            raise RuntimeError("Job is of type {} and replay is not yet supported.".format(type(job)))
-            sys.exit(1)
-
-    def run(self, job_id, speed=1.0, verbosity=0):
+    def run(self, job_id, speed=1.0, verbosity=0, skip_range=[], random_seed=0, final_status_delay=0, debug=False):
         stats = {
             'events_ontime': {
                 'total': 0,
@@ -119,22 +113,33 @@ class ReplayJobEvents():
         }
         try:
             job = self.get_job(job_id)
-            job_events = self.get_job_events(job)
-            serializer = self.get_serializer(job)
+            job_events, job_event_count = self.get_job_events(job)
         except RuntimeError as e:
             print("{}".format(e.message))
             sys.exit(1)
 
         je_previous = None
-        for je_current in job_events:
+
+        self.emit_job_status(job, 'pending')
+        self.emit_job_status(job, 'waiting')
+        self.emit_job_status(job, 'running')
+
+        finish_status_index = self.determine_job_event_finish_status_index(job_event_count, random_seed)
+
+        for n, je_current in enumerate(job_events):
+            if je_current.counter in skip_range:
+                continue
+
+            if debug:
+                input("{} of {}:".format(n, job_event_count))
+
             if not je_previous:
                 stats['recording_start'] = je_current.created
                 self.start(je_current.created)
                 stats['replay_start'] = self.replay_start
                 je_previous = je_current
 
-            je_serialized = serializer(je_current).data
-            emit_channel_notification('{}-{}'.format(je_serialized['group_name'], job.id), je_serialized)
+            emit_event_detail(je_current)
 
             replay_offset = self.replay_offset(je_previous.created, speed)
             recording_diff = (je_current.created - je_previous.created).total_seconds() * (1.0 / speed)
@@ -143,7 +148,7 @@ class ReplayJobEvents():
                 print("recording: next job in {} seconds".format(recording_diff))
             if replay_offset >= 0:
                 replay_diff = recording_diff - replay_offset
-                
+
                 if replay_diff > 0:
                     stats['events_ontime']['total'] += 1
                     if verbosity >= 3:
@@ -163,21 +168,30 @@ class ReplayJobEvents():
 
             stats['events_total'] += 1
             je_previous = je_current
-        
-        stats['replay_end'] = self.now()
-        stats['replay_duration'] = (stats['replay_end'] - stats['replay_start']).total_seconds()
-        stats['replay_start'] = stats['replay_start'].isoformat()
-        stats['replay_end'] = stats['replay_end'].isoformat()
 
-        stats['recording_end'] = je_current.created
-        stats['recording_duration'] = (stats['recording_end'] - stats['recording_start']).total_seconds()
-        stats['recording_start'] = stats['recording_start'].isoformat()
-        stats['recording_end'] = stats['recording_end'].isoformat()
+            if n == finish_status_index:
+                if final_status_delay != 0:
+                    self.sleep(final_status_delay)
+                self.emit_job_status(job, job.status)
 
-        stats['events_ontime']['percentage'] = (stats['events_ontime']['total'] / float(stats['events_total'])) * 100.00
-        stats['events_late']['percentage'] = (stats['events_late']['total'] / float(stats['events_total'])) * 100.00
-        stats['events_distance_average'] = stats['events_distance_total'] / stats['events_total']
-        stats['events_late']['lateness_average'] = stats['events_late']['lateness_total'] / stats['events_late']['total']
+        if stats['events_total'] > 2:
+            stats['replay_end'] = self.now()
+            stats['replay_duration'] = (stats['replay_end'] - stats['replay_start']).total_seconds()
+            stats['replay_start'] = stats['replay_start'].isoformat()
+            stats['replay_end'] = stats['replay_end'].isoformat()
+
+            stats['recording_end'] = je_current.created
+            stats['recording_duration'] = (stats['recording_end'] - stats['recording_start']).total_seconds()
+            stats['recording_start'] = stats['recording_start'].isoformat()
+            stats['recording_end'] = stats['recording_end'].isoformat()
+
+            stats['events_ontime']['percentage'] = (stats['events_ontime']['total'] / float(stats['events_total'])) * 100.00
+            stats['events_late']['percentage'] = (stats['events_late']['total'] / float(stats['events_total'])) * 100.00
+            stats['events_distance_average'] = stats['events_distance_total'] / stats['events_total']
+            stats['events_late']['lateness_average'] = stats['events_late']['lateness_total'] / stats['events_late']['total']
+        else:
+            stats = {'events_total': stats['events_total']}
+
         if verbosity >= 2:
             print(json.dumps(stats, indent=4, sort_keys=True))
 
@@ -186,16 +200,39 @@ class Command(BaseCommand):
 
     help = 'Replay job events over websockets ordered by created on date.'
 
+    def _parse_slice_range(self, slice_arg):
+        slice_arg = tuple([int(n) for n in slice_arg.split(':')])
+        slice_obj = slice(*slice_arg)
+
+        start = slice_obj.start or 0
+        stop = slice_obj.stop or -1
+        step = slice_obj.step or 1
+
+        return range(start, stop, step)
+
     def add_arguments(self, parser):
         parser.add_argument('--job_id', dest='job_id', type=int, metavar='j',
                             help='Id of the job to replay (job or adhoc)')
-        parser.add_argument('--speed', dest='speed', type=int, metavar='s',
+        parser.add_argument('--speed', dest='speed', type=float, metavar='s',
                             help='Speedup factor.')
+        parser.add_argument('--skip-range', dest='skip_range', type=str, metavar='k',
+                            default='0:-1:1', help='Range of events to skip')
+        parser.add_argument('--random-seed', dest='random_seed', type=int, metavar='r',
+                            default=0, help='Random number generator seed to use when determining job_event index to emit final job status')
+        parser.add_argument('--final-status-delay', dest='final_status_delay', type=float, metavar='f',
+                            default=0, help='Delay between event and final status emit')
+        parser.add_argument('--debug', dest='debug', type=bool, metavar='d',
+                            default=False, help='Enable step mode to control emission of job events one at a time.')
 
     def handle(self, *args, **options):
         job_id = options.get('job_id')
         speed = options.get('speed') or 1
         verbosity = options.get('verbosity') or 0
+        random_seed = options.get('random_seed')
+        final_status_delay = options.get('final_status_delay')
+        debug = options.get('debug')
+        skip = self._parse_slice_range(options.get('skip_range'))
 
         replayer = ReplayJobEvents()
-        replayer.run(job_id, speed, verbosity)
+        replayer.run(job_id, speed=speed, verbosity=verbosity, skip_range=skip, random_seed=random_seed,
+                     final_status_delay=final_status_delay, debug=debug)

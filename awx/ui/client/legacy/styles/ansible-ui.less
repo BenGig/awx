@@ -21,12 +21,6 @@
     src: url(/static/assets/OpenSans-Bold.ttf);
 }
 
-/* Bootstrap fix that's causing a right margin to appear
-   whenver a modal is opened */
-body.modal-open {
-  margin-right: 0;
-}
-
 /* Helper Classes */
 .pad-right-sm { padding-right: 10px; }
 .pad-left-md { padding-left: 30px; }
@@ -302,10 +296,6 @@ i:active,
   background-color: @default-succ;
 }
 
-.bold-text .checkbox-inline {
-  font-weight: bold;
-}
-
 /* Disable textarea re-sizing as a general rule */
 textarea {
   resize: none;
@@ -370,16 +360,21 @@ textarea.allowresize {
 }
 
 /* TB tooltip overrides */
-  .popover-content {
+  .popover-body {
       width: 100%;
       padding: 0;
+      color: @default-bg;
 
       .table>tbody>tr>td {
           padding-left: 0;
           border-top: 1px solid @b7grey;
       }
+      .popover-body_code-snippet{
+        padding: 0 3px;
+      }
   }
-  h3.popover-title, .popover-content, .popover-content blockquote, .popover-content a {
+  h3.popover-header, .popover-body, .popover-body blockquote, .popover-body a {
+      font-family: 'Open Sans', sans-serif;
       font-size: 12px;
   }
   .flyout {
@@ -391,7 +386,7 @@ textarea.allowresize {
   .flyout tbody > tr:last-child > td {
       padding-bottom: 0;
   }
-  .popover-title {
+  .popover-header {
       padding: 0 0 5px 0;
       background-color: @default-interface-txt;
       color: @default-bg;
@@ -428,6 +423,10 @@ textarea.allowresize {
 
       p:last-child {
           margin-bottom: 0;
+      }
+
+      table {
+        color: @default-bg; //white
       }
   }
   .popover.right>.arrow:after  {
@@ -479,37 +478,6 @@ hr {
     font-weight: normal;
   }
 }
-
-/* help collapse */
-  h4.panel-title {
-    font-size: 14px;
-  }
-
-  .panel-heading:hover {
-    cursor: pointer;
-  }
-
-  .panel-default>.panel-heading .collapse-help-icon {
-    color: @grey;
-  }
-
-  .collapsible-help {
-      margin-top: 20px;
-      margin-bottom: 20px;
-      dl {
-         margin-left: 15px;
-      }
-      dt {
-         margin-top: 15px;
-      }
-  }
-
-/*
-th.actions-column,
-td.actions {
-  white-space: nowrap;
-}
-*/
 
 .tab-content {
   padding-top: 15px;
@@ -586,6 +554,7 @@ dd {
 .ui-widget-content a.help-link:visited {
   color: @default-icon;
   text-decoration: none;
+  padding-left: 5px;
 }
 
 .help-link:hover,
@@ -805,27 +774,6 @@ select.page-size {
     display: inline-block;
 }
 
-/* Display drop-down menus on hover. Remove margin between toggle link
-   and menu, allowing smooth mouse movement between toggle and menu
-
-   http://stackoverflow.com/questions/8878033/how-to-make-twitter-bootstrap-menu-dropdown-on-hover-rather-than-click
-*/
-
-/*  .dropdown-toggle:hover .dropdown-menu, .dropdown:hover .dropdown-menu {
-     display: block;
-  }
-
-  .dropdown-menu li:hover {
-     visibility: visible;
-  }
-
-  .dropdown-menu {
-     margin-top: 0;
-     z-index: 200;
-  }
-*/
-/* end */
-
 .greeting {
   padding-right: 22px;
 }
@@ -857,36 +805,17 @@ input[type="checkbox"].checkbox-no-label {
   margin-top: 10px;
 }
 
-.radio-group {
-  .radio-inline + .radio-inline {
-    margin-left: 0;
-  }
-}
-
-.checkbox-group {
-  .radio-inline + .radio-inline,
-  .checkbox-inline + .checkbox-inline {
-    margin-left: 0;
-  }
-  .checkbox-inline, .radio-inline {
-    margin-right: 10px;
-  }
-
-  .checkbox-inline.stack-inline {
-      display: block;
-  }
-}
-
 .checkbox-options {
   font-weight: normal;
-  padding-right: 20px;
 }
 
 /* Display list actions next to search widget */
 .list-actions {
-    text-align: right;
-    margin-bottom: -34px;
+    display: flex;
     height: 34px;
+    justify-content: flex-end;
+    margin-bottom: -34px;
+    text-align: right;
 
     .fa-lg {
         vertical-align: -8%;
@@ -1255,6 +1184,10 @@ input[type="checkbox"].checkbox-no-label {
       color:@red;
   }
 
+  .error-border {
+      border-color:@red;
+  }
+
   .connecting-color {
       color: @warning;
   }
@@ -1607,6 +1540,7 @@ tr td button i {
 /* overrides to TB modal */
 .modal-content {
     padding: 20px;
+    box-shadow: 0 5px 15px rgba(0,0,0,.5);
 }
 
 .modal-header {
@@ -1622,6 +1556,7 @@ tr td button i {
 
 .modal {
   border: 1px solid @black;
+  overflow-y: auto;
 }
 
 .modal .SmartSearch-bar {
@@ -1654,7 +1589,7 @@ tr td button i {
     padding: 20px 0;
 
     .alert {
-        padding: 10px;
+        padding: 0px;
         margin: 0;
         word-wrap: break-word;
     }
@@ -1971,10 +1906,6 @@ tr td button i {
     margin: 0 15px;
 }
 
-.panel-title {
-    font-weight: bold;
-}
-
 .show_input_button {
     width: 73px;
 }
@@ -2022,7 +1953,7 @@ tr td button i {
   margin: 100px auto;
 }
 
-.modal-backdrop, .modal-backdrop.fade.in {
+.modal-backdrop, .modal-backdrop.fade.show {
     opacity: .25;
 }
 
@@ -2042,11 +1973,6 @@ tr td button i {
     color: @default-data-txt !important;
     transition: border-color 0.3s !important;
     box-shadow: none !important;
-}
-
-.select2-container {
-    margin-left: 2px;
-    margin-top: 2px;
 }
 
 .form-control + .select2-container--disabled .select2-selection {
@@ -2192,10 +2118,6 @@ a:hover {
     background-color: @default-err;
 }
 
-.dropdown-menu>li>a {
-    padding: 3px 10px;
-}
-
 #scheduled-jobs-tab .List-header {
     display: none;
 }
@@ -2302,6 +2224,10 @@ input[disabled].ui-spinner-input {
     background: @default-bg;
 }
 
+.ui-dialog.no-close button.close {
+    display: none;
+}
+
 html { height: 100%; }
 
 body {
@@ -2320,18 +2246,6 @@ body {
     padding-bottom: 0px;
 }
 
-.Panel {
-    background-color: @panel-bg;
-    border-radius: 5px;
-    padding: 20px;
-    border: 1px solid @panel-border;
-    margin-top: 20px;
-}
-
-.Panel-hidden {
-    display: none;
-}
-
 .btn {
     text-transform: uppercase;
 }
@@ -2339,4 +2253,16 @@ body {
 .ui-spinner-input {
     margin-top: .3em;
     margin-bottom: .3em;
+}
+
+.Toast-wrapper {
+    display: flex;
+    max-width: 250px;
+    word-break: break-word;
+}
+
+.Toast-icon {
+    display: flex;
+    align-items: center;
+    justify-content: center;
 }

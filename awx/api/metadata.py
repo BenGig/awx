@@ -5,6 +5,8 @@ from collections import OrderedDict
 
 # Django
 from django.core.exceptions import PermissionDenied
+from django.db.models.fields import PositiveIntegerField, BooleanField
+from django.db.models.fields.related import ForeignKey
 from django.http import Http404
 from django.utils.encoding import force_text, smart_text
 from django.utils.translation import ugettext_lazy as _
@@ -14,10 +16,14 @@ from rest_framework import exceptions
 from rest_framework import metadata
 from rest_framework import serializers
 from rest_framework.relations import RelatedField, ManyRelatedField
+from rest_framework.fields import JSONField as DRFJSONField
 from rest_framework.request import clone_request
 
 # AWX
+from awx.api.fields import ChoiceNullField
+from awx.main.fields import JSONField, ImplicitRoleField
 from awx.main.models import InventorySource, NotificationTemplate
+from awx.main.scheduler.kubernetes import PodManager
 
 
 class Metadata(metadata.SimpleMetadata):
@@ -44,9 +50,9 @@ class Metadata(metadata.SimpleMetadata):
         if placeholder is not serializers.empty:
             field_info['placeholder'] = placeholder
 
-        # Update help text for common fields.
         serializer = getattr(field, 'parent', None)
-        if serializer:
+        if serializer and hasattr(serializer, 'Meta') and hasattr(serializer.Meta, 'model'):
+            # Update help text for common fields.
             field_help_text = {
                 'id': _('Database ID for this {}.'),
                 'name': _('Name of this {}.'),
@@ -59,10 +65,21 @@ class Metadata(metadata.SimpleMetadata):
                 'modified': _('Timestamp when this {} was last modified.'),
             }
             if field.field_name in field_help_text:
-                if hasattr(serializer, 'Meta') and hasattr(serializer.Meta, 'model'):
-                    opts = serializer.Meta.model._meta.concrete_model._meta
-                    verbose_name = smart_text(opts.verbose_name)
-                    field_info['help_text'] = field_help_text[field.field_name].format(verbose_name)
+                opts = serializer.Meta.model._meta.concrete_model._meta
+                verbose_name = smart_text(opts.verbose_name)
+                field_info['help_text'] = field_help_text[field.field_name].format(verbose_name)
+
+            if field.field_name == 'type':
+                field_info['filterable'] = True
+            else:
+                for model_field in serializer.Meta.model._meta.fields:
+                    if field.field_name == model_field.name:
+                        if getattr(model_field, '__accepts_json__', None):
+                            field_info['type'] = 'json'
+                        field_info['filterable'] = True
+                        break
+                else:
+                    field_info['filterable'] = False
 
         # Indicate if a field has a default value.
         # FIXME: Still isn't showing all default values?
@@ -80,7 +97,13 @@ class Metadata(metadata.SimpleMetadata):
             field_info['children'] = self.get_serializer_info(field)
 
         if not isinstance(field, (RelatedField, ManyRelatedField)) and hasattr(field, 'choices'):
-            field_info['choices'] = [(choice_value, choice_name) for choice_value, choice_name in field.choices.items()]
+            choices = [
+                (choice_value, choice_name) for choice_value, choice_name in field.choices.items()
+            ]
+            if not any(choice in ('', None) for choice, _ in choices):
+                if field.allow_blank or (field.allow_null and not isinstance(field, ChoiceNullField)):
+                    choices = [("", "---------")] + choices
+            field_info['choices'] = choices
 
         # Indicate if a field is write-only.
         if getattr(field, 'write_only', False):
@@ -105,15 +128,55 @@ class Metadata(metadata.SimpleMetadata):
             for (notification_type_name, notification_tr_name, notification_type_class) in NotificationTemplate.NOTIFICATION_TYPES:
                 field_info[notification_type_name] = notification_type_class.init_parameters
 
+        # Special handling of notification messages where the required properties
+        # are conditional on the type selected.
+        try:
+            view_model = field.context['view'].model
+        except (AttributeError, KeyError):
+            view_model = None
+        if view_model == NotificationTemplate and field.field_name == 'messages':
+            for (notification_type_name, notification_tr_name, notification_type_class) in NotificationTemplate.NOTIFICATION_TYPES:
+                field_info[notification_type_name] = notification_type_class.default_messages
+
+
         # Update type of fields returned...
+        model_field = None
+        if serializer and hasattr(serializer, 'Meta') and hasattr(serializer.Meta, 'model'):
+            try:
+                model_field = serializer.Meta.model._meta.get_field(field.field_name)
+            except Exception:
+                pass
         if field.field_name == 'type':
             field_info['type'] = 'choice'
-        elif field.field_name == 'url':
+        elif field.field_name in ('url', 'custom_virtualenv', 'token'):
             field_info['type'] = 'string'
         elif field.field_name in ('related', 'summary_fields'):
             field_info['type'] = 'object'
+        elif isinstance(field, PositiveIntegerField):
+            field_info['type'] = 'integer'
         elif field.field_name in ('created', 'modified'):
             field_info['type'] = 'datetime'
+        elif (
+            RelatedField in field.__class__.__bases__ or
+            isinstance(model_field, ForeignKey)
+        ):
+            field_info['type'] = 'id'
+        elif (
+            isinstance(field, JSONField) or
+            isinstance(model_field, JSONField) or
+            isinstance(field, DRFJSONField) or
+            isinstance(getattr(field, 'model_field', None), JSONField) or
+            field.field_name == 'credential_passwords'
+        ):
+            field_info['type'] = 'json'
+        elif (
+            isinstance(field, ManyRelatedField) and
+            field.field_name == 'credentials'
+            # launch-time credentials
+        ):
+            field_info['type'] = 'list_of_ids'
+        elif isinstance(model_field, BooleanField):
+            field_info['type'] = 'boolean'
 
         return field_info
 
@@ -148,9 +211,12 @@ class Metadata(metadata.SimpleMetadata):
             finally:
                 view.request = request
 
-            for field, meta in actions[method].items():
+            for field, meta in list(actions[method].items()):
                 if not isinstance(meta, dict):
                     continue
+
+                if field == "pod_spec_override":
+                    meta['default'] = PodManager().pod_definition
 
                 # Add type choices if available from the serializer.
                 if field == 'type' and hasattr(serializer, 'get_type_choices'):
@@ -204,6 +270,16 @@ class Metadata(metadata.SimpleMetadata):
         if getattr(view, 'related_search_fields', None):
             metadata['related_search_fields'] = view.related_search_fields
 
+        # include role names in metadata
+        roles = []
+        model = getattr(view, 'model', None)
+        if model:
+            for field in model._meta.get_fields():
+                if type(field) is ImplicitRoleField:
+                    roles.append(field.name)
+        if len(roles) > 0:
+            metadata['object_roles'] = roles
+
         from rest_framework import generics
         if isinstance(view, generics.ListAPIView) and hasattr(view, 'paginator'):
             metadata['max_page_size'] = view.paginator.max_page_size
@@ -223,28 +299,13 @@ class RoleMetadata(Metadata):
         return metadata
 
 
-# TODO: Tower 3.3 remove class and all uses in views.py when API v1 is removed
-class JobTypeMetadata(Metadata):
-        def get_field_info(self, field):
-            res = super(JobTypeMetadata, self).get_field_info(field)
-
-            if field.field_name == 'job_type':
-                index = 0
-                for choice in res['choices']:
-                    if choice[0] == 'scan':
-                        res['choices'].pop(index)
-                        break
-                    index += 1
-            return res
-
-
 class SublistAttachDetatchMetadata(Metadata):
 
     def determine_actions(self, request, view):
         actions = super(SublistAttachDetatchMetadata, self).determine_actions(request, view)
         method = 'POST'
         if method in actions:
-            for field in actions[method]:
+            for field in list(actions[method].keys()):
                 if field == 'id':
                     continue
                 actions[method].pop(field)

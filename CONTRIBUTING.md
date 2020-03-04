@@ -2,29 +2,29 @@
 
 Hi there! We're excited to have you as a contributor.
 
-Have questions about this document or anything not covered here? Come chat with us at `#ansible-awx` on irc.freenode.net, or submit your question to the [mailing list](https://groups.google.com/forum/#!forum/awx-project) .
+Have questions about this document or anything not covered here? Come chat with us at `#ansible-awx` on irc.freenode.net, or submit your question to the [mailing list](https://groups.google.com/forum/#!forum/awx-project).
 
 ## Table of contents
 
-* [Things to know prior to submitting code](#things-to-know-before-contributing-code)
+* [Things to know prior to submitting code](#things-to-know-prior-to-submitting-code)
 * [Setting up your development environment](#setting-up-your-development-environment)
   * [Prerequisites](#prerequisites)
     * [Docker](#docker)
     * [Docker compose](#docker-compose)
     * [Node and npm](#node-and-npm)
-  * [Building the environment](#building-the-environment)
-    * [Clone the AWX repo](#clone-the-awx-repo)
+  * [Build the environment](#build-the-environment)
+    * [Fork and clone the AWX repo](#fork-and-clone-the-awx-repo)
     * [Create local settings](#create-local-settings)
     * [Build the base image](#build-the-base-image)
     * [Build the user interface](#build-the-user-interface)
-  # [Running the environment](#running-the-environment)
+  * [Running the environment](#running-the-environment)
     * [Start the containers](#start-the-containers)
     * [Start from the container shell](#start-from-the-container-shell)
   * [Post Build Steps](#post-build-steps)
-     * [Start a shell](#start-the-shell)
-     * [Create a superuser](#create-a-superuser)
-     * [Load the data](#load-the-data)
-     * [Building API Documentation](#build-documentation)
+    * [Start a shell](#start-a-shell)
+    * [Create a superuser](#create-a-superuser)
+    * [Load the data](#load-the-data)
+    * [Building API Documentation](#build-api-documentation)
   * [Accessing the AWX web interface](#accessing-the-awx-web-interface)
   * [Purging containers and images](#purging-containers-and-images)
 * [What should I work on?](#what-should-i-work-on)
@@ -34,10 +34,11 @@ Have questions about this document or anything not covered here? Come chat with 
 ## Things to know prior to submitting code
 
 - All code submissions are done through pull requests against the `devel` branch.
-- You must use `git commit --signoff` for any commit to be merged, and agree that usage of --signoff constitutes agreement with the terms of [DCO 1.1](./DCO_1_1.md).  
+- You must use `git commit --signoff` for any commit to be merged, and agree that usage of --signoff constitutes agreement with the terms of [DCO 1.1](./DCO_1_1.md).
 - Take care to make sure no merge commits are in the submission, and use `git rebase` vs `git merge` for this reason.
+  - If collaborating with someone else on the same branch, consider using `--force-with-lease` instead of `--force`. This will prevent you from accidentally overwriting commits pushed by someone else. For more information, see https://git-scm.com/docs/git-push#git-push---force-with-leaseltrefnamegt
 - If submitting a large code change, it's a good idea to join the `#ansible-awx` channel on irc.freenode.net, and talk about what you would like to do or add first. This not only helps everyone know what's going on, it also helps save time and effort, if the community decides some changes are needed.
-- We ask all of our community members and contributors to adhere to the [Ansible code of conduct](http://docs.ansible.com/ansible/latest/community/code_of_conduct.html). If you have questions, or need assistance, please reach out to our community team at [codeofconduct@ansible.com](mailto:codeofconduct@ansible.com)   
+- We ask all of our community members and contributors to adhere to the [Ansible code of conduct](http://docs.ansible.com/ansible/latest/community/code_of_conduct.html). If you have questions, or need assistance, please reach out to our community team at [codeofconduct@ansible.com](mailto:codeofconduct@ansible.com)
 
 ## Setting up your development environment
 
@@ -49,7 +50,7 @@ The AWX development environment workflow and toolchain is based on Docker, and t
 
 Prior to starting the development services, you'll need `docker` and `docker-compose`. On Linux, you can generally find these in your distro's packaging, but you may find that Docker themselves maintain a separate repo that tracks more closely to the latest releases.
 
-For macOS and Windows, we recommend [Docker for Mac](https://www.docker.com/docker-mac) and [Docker for Windows](https://www.docker.com/docker-windows) 
+For macOS and Windows, we recommend [Docker for Mac](https://www.docker.com/docker-mac) and [Docker for Windows](https://www.docker.com/docker-windows)
 respectively.
 
 For Linux platforms, refer to the following from Docker:
@@ -82,12 +83,10 @@ If you're not using Docker for Mac, or Docker for Windows, you may need, or choo
 (host)$ pip install docker-compose
 ```
 
-#### Node and npm
+#### Frontend Development
 
-The AWX UI requires the following:
+See [the ui development documentation](awx/ui/README.md).
 
-- Node 6.x LTS version
-- NPM 3.x LTS
 
 ### Build the environment
 
@@ -135,28 +134,30 @@ Run the following to build the AWX UI:
 ```bash
 (host) $ make ui-devel
 ```
+See [the ui development documentation](awx/ui/README.md) for more information on using the frontend development, build, and test tooling.
+
 ### Running the environment
 
-#### Start the containers 
+#### Start the containers
 
 Start the development containers by running the following:
 
 ```bash
 (host)$ make docker-compose
 ```
-    
-The above utilizes the image built in the previous step, and will automatically start all required services and dependent containers. Once the containers launch, your session will be attached to the *awx* container, and you'll be able to watch log messages and events in real time. You will see messages from Django, celery, and the front end build process.
+
+The above utilizes the image built in the previous step, and will automatically start all required services and dependent containers. Once the containers launch, your session will be attached to the *awx* container, and you'll be able to watch log messages and events in real time. You will see messages from Django and the front end build process.
 
 If you start a second terminal session, you can take a look at the running containers using the `docker ps` command. For example:
 
 ```bash
 # List running containers
-(host)$ docker ps 
+(host)$ docker ps
 
 $ docker ps
 CONTAINER ID        IMAGE                                              COMMAND                  CREATED             STATUS              PORTS                                                                                                                                      NAMES
-aa4a75d6d77b        gcr.io/ansible-tower-engineering/awx_devel:devel   "/tini -- /bin/sh ..."   23 seconds ago      Up 15 seconds       0.0.0.0:5555->5555/tcp, 0.0.0.0:6899-6999->6899-6999/tcp, 0.0.0.0:8013->8013/tcp, 0.0.0.0:8043->8043/tcp, 22/tcp, 0.0.0.0:8080->8080/tcp   tools_awx_1
-e4c0afeb548c        postgres:9.6                                       "docker-entrypoint..."   26 seconds ago      Up 23 seconds       5432/tcp                                                                                                                                   tools_postgres_1
+aa4a75d6d77b        gcr.io/ansible-tower-engineering/awx_devel:devel   "/tini -- /bin/sh ..."   23 seconds ago      Up 15 seconds       0.0.0.0:5555->5555/tcp, 0.0.0.0:7899-7999->7899-7999/tcp, 0.0.0.0:8013->8013/tcp, 0.0.0.0:8043->8043/tcp, 22/tcp, 0.0.0.0:8080->8080/tcp   tools_awx_1
+e4c0afeb548c        postgres:10                                       "docker-entrypoint..."   26 seconds ago      Up 23 seconds       5432/tcp                                                                                                                                   tools_postgres_1
 0089699d5afd        tools_logstash                                     "/docker-entrypoin..."   26 seconds ago      Up 25 seconds                                                                                                                                                  tools_logstash_1
 4d4ff0ced266        memcached:alpine                                   "docker-entrypoint..."   26 seconds ago      Up 25 seconds       0.0.0.0:11211->11211/tcp                                                                                                                   tools_memcached_1
 92842acd64cd        rabbitmq:3-management                              "docker-entrypoint..."   26 seconds ago      Up 24 seconds       4369/tcp, 5671-5672/tcp, 15671/tcp, 25672/tcp, 0.0.0.0:15672->15672/tcp                                                                    tools_rabbitmq_1
@@ -174,7 +175,7 @@ The first time you start the environment, database migrations need to run in ord
 ```bash
 awx_1        | Operations to perform:
 awx_1        |   Synchronize unmigrated apps: solo, api, staticfiles, debug_toolbar, messages, channels, django_extensions, ui, rest_framework, polymorphic
-awx_1        |   Apply all migrations: sso, taggit, sessions, djcelery, sites, kombu_transport_django, social_auth, contenttypes, auth, conf, main
+awx_1        |   Apply all migrations: sso, taggit, sessions, sites, kombu_transport_django, social_auth, contenttypes, auth, conf, main
 awx_1        | Synchronizing apps without migrations:
 awx_1        |   Creating tables...
 awx_1        |     Running deferred SQL...
@@ -219,7 +220,7 @@ If you want to start and use the development environment, you'll first need to b
 ```
 
 The above will do all the setup tasks, including running database migrations, so it may take a couple minutes.
-    
+
 Now you can start each service individually, or start all services in a pre-configured tmux session like so:
 
 ```bash
@@ -248,9 +249,9 @@ Before you can log into AWX, you need to create an admin user. With this user yo
 (container)# awx-manage createsuperuser
 ```
 You will be prompted for a username, an email address, and a password, and you will be asked to confirm the password. The email address is not important, so just enter something that looks like an email address. Remember the username and password, as you will use them to log into the web interface for the first time.
-    
+
 ##### Load demo data
-  
+
 You can optionally load some demo data. This will create a demo project, inventory, and job template. From within the container shell, run the following to load the data:
 
 ```bash
@@ -276,7 +277,7 @@ in OpenAPI format.  A variety of online tools are available for translating
 this data into more consumable formats (such as HTML). http://editor.swagger.io
 is an example of one such service.
 
-### Accessing the AWX web interface 
+### Accessing the AWX web interface
 
 You can now log into the AWX web interface at [https://localhost:8043](https://localhost:8043), and access the API directly at [https://localhost:8043/api/](https://localhost:8043/api/).
 
@@ -289,7 +290,7 @@ When necessary, remove any AWX containers and images by running the following:
 ```bash
 (host)$ make docker-clean
 ```
-        
+
 ## What should I work on?
 
 For feature work, take a look at the current [Enhancements](https://github.com/ansible/awx/issues?q=is%3Aissue+is%3Aopen+label%3Atype%3Aenhancement).
@@ -329,7 +330,24 @@ We like to keep our commit history clean, and will require resubmission of pull 
 
 Sometimes it might take us a while to fully review your PR. We try to keep the `devel` branch in good working order, and so we review requests carefully. Please be patient.
 
-All submitted PRs will have the linter and unit tests run against them, and the status reported in the PR.
+All submitted PRs will have the linter and unit tests run against them via Zuul, and the status reported in the PR.
+
+## PR Checks ran by Zuul
+Zuul jobs for awx are defined in the [zuul-jobs](https://github.com/ansible/zuul-jobs) repo.
+
+Zuul runs the following checks that must pass:
+1) `tox-awx-api-lint`
+2) `tox-awx-ui-lint`
+3) `tox-awx-api`
+4) `tox-awx-ui`
+5) `tox-awx-swagger`
+
+Zuul runs the following checks that are non-voting (can not pass but serve to inform PR reviewers):
+1) `tox-awx-detect-schema-change`
+    This check generates the schema and diffs it against a reference copy of the `devel` version of the schema.
+    Reviewers should inspect the `job-output.txt.gz` related to the check if their is a failure (grep for `diff -u -b` to find beginning of diff).
+    If the schema change is expected and makes sense in relation to the changes made by the PR, then you are good to go!
+    If not, the schema changes should be fixed, but this decision must be enforced by reviewers.
 
 ## Reporting Issues
 

@@ -21,7 +21,7 @@ export default [function() {
             name: {
                 key: true,
                 label: 'Name',
-                columnClass: 'col-lg-4 col-md-6 col-sm-8 col-xs-8',
+                columnClass: 'col-sm-12',
                 awToolTip: '{{organization.description | sanitize}}',
                 dataPlacement: 'top'
             },
@@ -32,9 +32,8 @@ export default [function() {
                 mode: 'all', // One of: edit, select, all
                 ngClick: 'addOrganization()',
                 awToolTip: 'Create a new organization',
-                awFeature: 'multiple_organizations',
-                actionClass: 'btn List-buttonSubmit',
-                buttonContent: '&#43; ADD'
+                actionClass: 'at-Button--add',
+                actionId: 'button-add'
             }
         },
 

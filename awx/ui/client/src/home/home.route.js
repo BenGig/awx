@@ -10,12 +10,7 @@ export default {
     params: { licenseMissing: null },
     data: {
         activityStream: true,
-        refreshButton: true,
-        socket: {
-            "groups": {
-                "jobs": ["status_changed"]
-            }
-        },
+        refreshButton: true
     },
     ncyBreadcrumb: {
         label: N_("DASHBOARD")
@@ -23,7 +18,7 @@ export default {
     resolve: {
         graphData: ['$q', 'jobStatusGraphData', '$rootScope',
             function($q, jobStatusGraphData, $rootScope) {
-                return $rootScope.featuresConfigured.promise.then(function() {
+                return $rootScope.basePathsLoaded.promise.then(function() {
                     return $q.all({
                         jobStatus: jobStatusGraphData.get("month", "all"),
                     });

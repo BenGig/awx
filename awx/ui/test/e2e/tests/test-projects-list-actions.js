@@ -12,7 +12,6 @@ module.exports = {
         const projects = client.page.projects();
 
         client.useCss();
-        client.resizeWindow(1200, 800);
         client.login();
         client.waitForAngular();
 
@@ -31,11 +30,29 @@ module.exports = {
         projects.waitForElementNotVisible('div.spinny');
 
         projects.section.list.expect.element('@badge').text.equal('1');
-        projects.expect.element(`#projects_table tr[id="${data.project.id}"]`).visible;
+        projects.expect.element(`#row-${data.project.id}`).visible;
         projects.expect.element('i[class*="copy"]').visible;
         projects.expect.element('i[class*="copy"]').enabled;
 
         projects.click('i[class*="copy"]');
+        projects.waitForElementVisible('div.spinny');
+        projects.waitForElementNotVisible('div.spinny');
+
+        const activityStream = 'bread-crumb > div i[class$="icon-activity-stream"]';
+        const activityRow = '#activities_table .List-tableCell[class*="description-column"] a';
+        const toast = 'div[class="Toast-icon"]';
+
+        projects.waitForElementNotPresent(toast);
+        projects.expect.element(activityStream).visible;
+        projects.expect.element(activityStream).enabled;
+        projects.click(activityStream);
+        projects.waitForElementVisible('div.spinny');
+        projects.waitForElementNotVisible('div.spinny');
+
+        client
+            .waitForElementVisible(activityRow)
+            .click(activityRow);
+
         projects.waitForElementVisible('div.spinny');
         projects.waitForElementNotVisible('div.spinny');
 

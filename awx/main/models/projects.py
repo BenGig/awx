@@ -4,7 +4,7 @@
 # Python
 import datetime
 import os
-import urlparse
+import urllib.parse as urlparse
 
 # Django
 from django.conf import settings
@@ -15,11 +15,10 @@ from django.utils.text import slugify
 from django.core.exceptions import ValidationError
 from django.utils.timezone import now, make_aware, get_default_timezone
 
-import six
 
 # AWX
 from awx.api.versioning import reverse
-from awx.main.models.base import * # noqa
+from awx.main.models.base import PROJECT_UPDATE_JOB_TYPE_CHOICES, PERM_INVENTORY_DEPLOY
 from awx.main.models.events import ProjectUpdateEvent
 from awx.main.models.notifications import (
     NotificationTemplate,
@@ -29,6 +28,7 @@ from awx.main.models.unified_jobs import (
     UnifiedJob,
     UnifiedJobTemplate,
 )
+from awx.main.models.jobs import Job
 from awx.main.models.mixins import (
     ResourceMixin,
     TaskManagerProjectUpdateMixin,
@@ -68,7 +68,7 @@ class ProjectOptions(models.Model):
     @classmethod
     def get_local_path_choices(cls):
         if os.path.exists(settings.PROJECTS_ROOT):
-            paths = [x.decode('utf-8') for x in os.listdir(settings.PROJECTS_ROOT)
+            paths = [x for x in os.listdir(settings.PROJECTS_ROOT)
                      if (os.path.isdir(os.path.join(settings.PROJECTS_ROOT, x)) and
                          not x.startswith('.') and not x.startswith('_'))]
             qs = Project.objects
@@ -106,6 +106,13 @@ class ProjectOptions(models.Model):
         verbose_name=_('SCM Branch'),
         help_text=_('Specific branch, tag or commit to checkout.'),
     )
+    scm_refspec = models.CharField(
+        max_length=1024,
+        blank=True,
+        default='',
+        verbose_name=_('SCM refspec'),
+        help_text=_('For git projects, an additional refspec to fetch.'),
+    )
     scm_clean = models.BooleanField(
         default=False,
         help_text=_('Discard any local changes before syncing the project.'),
@@ -134,7 +141,7 @@ class ProjectOptions(models.Model):
     def clean_scm_url(self):
         if self.scm_type == 'insights':
             self.scm_url = settings.INSIGHTS_URL_BASE
-        scm_url = six.text_type(self.scm_url or '')
+        scm_url = str(self.scm_url or '')
         if not self.scm_type:
             return ''
         try:
@@ -145,7 +152,7 @@ class ProjectOptions(models.Model):
         scm_url_parts = urlparse.urlsplit(scm_url)
         if self.scm_type and not any(scm_url_parts):
             raise ValidationError(_('SCM URL is required.'))
-        return six.text_type(self.scm_url or '')
+        return str(self.scm_url or '')
 
     def clean_credential(self):
         if not self.scm_type:
@@ -166,8 +173,8 @@ class ProjectOptions(models.Model):
                                          check_special_cases=False)
                 scm_url_parts = urlparse.urlsplit(scm_url)
                 # Prefer the username/password in the URL, if provided.
-                scm_username = scm_url_parts.username or cred.username or ''
-                if scm_url_parts.password or cred.password:
+                scm_username = scm_url_parts.username or cred.get_input('username', default='')
+                if scm_url_parts.password or cred.has_input('password'):
                     scm_password = '********'
                 else:
                     scm_password = ''
@@ -241,6 +248,7 @@ class Project(UnifiedJobTemplate, ProjectOptions, ResourceMixin, CustomVirtualEn
     SOFT_UNIQUE_TOGETHER = [('polymorphic_ctype', 'name', 'organization')]
     FIELDS_TO_PRESERVE_AT_COPY = ['labels', 'instance_groups', 'credentials']
     FIELDS_TO_DISCARD_AT_COPY = ['local_path']
+    FIELDS_TRIGGER_UPDATE = frozenset(['scm_url', 'scm_branch', 'scm_type', 'scm_refspec'])
 
     class Meta:
         app_label = 'main'
@@ -253,10 +261,6 @@ class Project(UnifiedJobTemplate, ProjectOptions, ResourceMixin, CustomVirtualEn
         on_delete=models.CASCADE,
         related_name='projects',
     )
-    scm_delete_on_next_update = models.BooleanField(
-        default=False,
-        editable=False,
-    )
     scm_update_on_launch = models.BooleanField(
         default=False,
         help_text=_('Update the project when a job is launched that uses the project.'),
@@ -264,8 +268,13 @@ class Project(UnifiedJobTemplate, ProjectOptions, ResourceMixin, CustomVirtualEn
     scm_update_cache_timeout = models.PositiveIntegerField(
         default=0,
         blank=True,
-        help_text=_('The number of seconds after the last project update ran that a new'
+        help_text=_('The number of seconds after the last project update ran that a new '
                     'project update will be launched as a job dependency.'),
+    )
+    allow_override = models.BooleanField(
+        default=False,
+        help_text=_('Allow changing the SCM branch or revision in a job template '
+                    'that uses this project.'),
     )
 
     scm_revision = models.CharField(
@@ -320,25 +329,19 @@ class Project(UnifiedJobTemplate, ProjectOptions, ResourceMixin, CustomVirtualEn
     @classmethod
     def _get_unified_job_field_names(cls):
         return set(f.name for f in ProjectOptions._meta.fields) | set(
-            ['name', 'description', 'schedule']
+            ['name', 'description']
         )
 
     def save(self, *args, **kwargs):
         new_instance = not bool(self.pk)
+        pre_save_vals = getattr(self, '_prior_values_store', {})
         # If update_fields has been specified, add our field names to it,
         # if it hasn't been specified, then we're just doing a normal save.
         update_fields = kwargs.get('update_fields', [])
         skip_update = bool(kwargs.pop('skip_update', False))
-        # Check if scm_type or scm_url changes.
-        if self.pk:
-            project_before = self.__class__.objects.get(pk=self.pk)
-            if project_before.scm_type != self.scm_type or project_before.scm_url != self.scm_url:
-                self.scm_delete_on_next_update = True
-                if 'scm_delete_on_next_update' not in update_fields:
-                    update_fields.append('scm_delete_on_next_update')
         # Create auto-generated local path if project uses SCM.
         if self.pk and self.scm_type and not self.local_path.startswith('_'):
-            slug_name = slugify(six.text_type(self.name)).replace(u'-', u'_')
+            slug_name = slugify(str(self.name)).replace(u'-', u'_')
             self.local_path = u'_%d__%s' % (int(self.pk), slug_name)
             if 'local_path' not in update_fields:
                 update_fields.append('local_path')
@@ -354,7 +357,12 @@ class Project(UnifiedJobTemplate, ProjectOptions, ResourceMixin, CustomVirtualEn
                 with disable_activity_stream():
                     self.save(update_fields=update_fields)
         # If we just created a new project with SCM, start the initial update.
-        if new_instance and self.scm_type and not skip_update:
+        # also update if certain fields have changed
+        relevant_change = any(
+            pre_save_vals.get(fd_name, None) != self._prior_values_store.get(fd_name, None)
+            for fd_name in self.FIELDS_TRIGGER_UPDATE
+        )
+        if (relevant_change or new_instance) and (not skip_update) and self.scm_type:
             self.update()
 
     def _get_current_status(self):
@@ -390,19 +398,6 @@ class Project(UnifiedJobTemplate, ProjectOptions, ResourceMixin, CustomVirtualEn
     def _can_update(self):
         return bool(self.scm_type)
 
-    def _update_unified_job_kwargs(self, create_kwargs, kwargs):
-        '''
-        :param create_kwargs: key-worded arguments to be updated and later used for creating unified job.
-        :type create_kwargs: dict
-        :param kwargs: request parameters used to override unified job template fields with runtime values.
-        :type kwargs: dict
-        :return: modified create_kwargs.
-        :rtype: dict
-        '''
-        if self.scm_delete_on_next_update:
-            create_kwargs['scm_delete_on_update'] = True
-        return create_kwargs
-
     def create_project_update(self, **kwargs):
         return self.create_unified_job(**kwargs)
 
@@ -428,24 +423,24 @@ class Project(UnifiedJobTemplate, ProjectOptions, ResourceMixin, CustomVirtualEn
         base_notification_templates = NotificationTemplate.objects
         error_notification_templates = list(base_notification_templates
                                             .filter(unifiedjobtemplate_notification_templates_for_errors=self))
+        started_notification_templates = list(base_notification_templates
+                                              .filter(unifiedjobtemplate_notification_templates_for_started=self))
         success_notification_templates = list(base_notification_templates
                                               .filter(unifiedjobtemplate_notification_templates_for_success=self))
-        any_notification_templates = list(base_notification_templates
-                                          .filter(unifiedjobtemplate_notification_templates_for_any=self))
         # Get Organization NotificationTemplates
         if self.organization is not None:
             error_notification_templates = set(error_notification_templates +
                                                list(base_notification_templates
                                                     .filter(organization_notification_templates_for_errors=self.organization)))
+            started_notification_templates = set(started_notification_templates +
+                                                 list(base_notification_templates
+                                                      .filter(organization_notification_templates_for_started=self.organization)))
             success_notification_templates = set(success_notification_templates +
                                                  list(base_notification_templates
                                                       .filter(organization_notification_templates_for_success=self.organization)))
-            any_notification_templates = set(any_notification_templates +
-                                             list(base_notification_templates
-                                                  .filter(organization_notification_templates_for_any=self.organization)))
         return dict(error=list(error_notification_templates),
-                    success=list(success_notification_templates),
-                    any=list(any_notification_templates))
+                    started=list(started_notification_templates),
+                    success=list(success_notification_templates))
 
     def get_absolute_url(self, request=None):
         return reverse('api:project_detail', kwargs={'pk': self.pk}, request=request)
@@ -458,6 +453,14 @@ class Project(UnifiedJobTemplate, ProjectOptions, ResourceMixin, CustomVirtualEn
             models.Q(Job___project=self) |
             models.Q(ProjectUpdate___project=self)
         )
+
+    def delete(self, *args, **kwargs):
+        path_to_delete = self.get_project_path(check_if_exists=False)
+        r = super(Project, self).delete(*args, **kwargs)
+        if self.scm_type and path_to_delete:  # non-manual, concrete path
+            from awx.main.tasks import delete_project_files
+            delete_project_files.delay(path_to_delete)
+        return r
 
 
 class ProjectUpdate(UnifiedJob, ProjectOptions, JobNotificationMixin, TaskManagerProjectUpdateMixin):
@@ -480,10 +483,38 @@ class ProjectUpdate(UnifiedJob, ProjectOptions, JobNotificationMixin, TaskManage
         choices=PROJECT_UPDATE_JOB_TYPE_CHOICES,
         default='check',
     )
+    job_tags = models.CharField(
+        max_length=1024,
+        blank=True,
+        default='',
+        help_text=_('Parts of the project update playbook that will be run.'),
+    )
+    scm_revision = models.CharField(
+        max_length=1024,
+        blank=True,
+        default='',
+        editable=False,
+        verbose_name=_('SCM Revision'),
+        help_text=_('The SCM Revision discovered by this update for the given project and branch.'),
+    )
 
-    @classmethod
-    def _get_parent_field_name(cls):
+    def _get_parent_field_name(self):
         return 'project'
+
+    def _update_parent_instance(self):
+        if not self.project:
+            return  # no parent instance to update
+        if self.job_type == PERM_INVENTORY_DEPLOY:
+            # Do not update project status if this is sync job
+            # unless no other updates have happened or started
+            first_update = False
+            if self.project.status == 'never updated' and self.status == 'running':
+                first_update = True
+            elif self.project.current_job == self:
+                first_update = True
+            if not first_update:
+                return
+        return super(ProjectUpdate, self)._update_parent_instance()
 
     @classmethod
     def _get_task_class(cls):
@@ -533,25 +564,13 @@ class ProjectUpdate(UnifiedJob, ProjectOptions, JobNotificationMixin, TaskManage
         return reverse('api:project_update_detail', kwargs={'pk': self.pk}, request=request)
 
     def get_ui_url(self):
-        return urlparse.urljoin(settings.TOWER_URL_BASE, "/#/scm_update/{}".format(self.pk))
-
-    def _update_parent_instance(self):
-        parent_instance = self._get_parent_instance()
-        if parent_instance and self.job_type == 'check':
-            update_fields = self._update_parent_instance_no_save(parent_instance)
-            if self.status in ('successful', 'failed', 'error', 'canceled'):
-                if not self.failed and parent_instance.scm_delete_on_next_update:
-                    parent_instance.scm_delete_on_next_update = False
-                    if 'scm_delete_on_next_update' not in update_fields:
-                        update_fields.append('scm_delete_on_next_update')
-            parent_instance.save(update_fields=update_fields)
+        return urlparse.urljoin(settings.TOWER_URL_BASE, "/#/jobs/project/{}".format(self.pk))
 
     def cancel(self, job_explanation=None, is_chain=False):
         res = super(ProjectUpdate, self).cancel(job_explanation=job_explanation, is_chain=is_chain)
         if res and self.launch_type != 'sync':
             for inv_src in self.scm_inventory_updates.filter(status='running'):
-                inv_src.cancel(job_explanation=six.text_type(
-                    'Source project update `{}` was canceled.').format(self.name))
+                inv_src.cancel(job_explanation='Source project update `{}` was canceled.'.format(self.name))
         return res
 
     '''
@@ -575,4 +594,23 @@ class ProjectUpdate(UnifiedJob, ProjectOptions, JobNotificationMixin, TaskManage
             return self.global_instance_groups
         return selected_groups
 
-
+    def save(self, *args, **kwargs):
+        added_update_fields = []
+        if not self.job_tags:
+            job_tags = ['update_{}'.format(self.scm_type)]
+            if self.job_type == 'run':
+                job_tags.append('install_roles')
+                job_tags.append('install_collections')
+            self.job_tags = ','.join(job_tags)
+            added_update_fields.append('job_tags')
+        if self.scm_delete_on_update and 'delete' not in self.job_tags and self.job_type == 'check':
+            self.job_tags = ','.join([self.job_tags, 'delete'])
+            added_update_fields.append('job_tags')
+        elif (not self.scm_delete_on_update) and 'delete' in self.job_tags:
+            job_tags = self.job_tags.split(',')
+            job_tags.remove('delete')
+            self.job_tags = ','.join(job_tags)
+            added_update_fields.append('job_tags')
+        if 'update_fields' in kwargs:
+            kwargs['update_fields'].extend(added_update_fields)
+        return super(ProjectUpdate, self).save(*args, **kwargs)

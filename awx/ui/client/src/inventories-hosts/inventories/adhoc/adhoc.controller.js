@@ -12,7 +12,7 @@
 function adhocController($q, $scope, $stateParams,
     $state, CheckPasswords, PromptForPasswords, CreateLaunchDialog, CreateSelect2, adhocForm,
     GenerateForm, Rest, ProcessErrors, GetBasePath, GetChoices,
-    KindChange, Wait, ParseTypeChange) {
+    KindChange, Wait, ParseTypeChange, machineCredentialType) {
 
     // this is done so that we can access private functions for testing, but
     // we don't want to populate the "public" scope with these internal
@@ -28,7 +28,7 @@ function adhocController($q, $scope, $stateParams,
         return {
             adhocUrl: GetBasePath('inventory') + id + '/ad_hoc_commands/',
             inventoryUrl: GetBasePath('inventory') + id + '/',
-            machineCredentialUrl: GetBasePath('credentials') + '?kind=ssh'
+            machineCredentialUrl: GetBasePath('credentials') + '?credential_type__namespace=ssh'
         };
     };
 
@@ -230,25 +230,25 @@ function adhocController($q, $scope, $stateParams,
           $scope.removeStartAdhocRun();
         }
         $scope.removeStartAdhocRun = $scope.$on('StartAdhocRun', function() {
-                var password;
-                for (password in $scope.passwords) {
-                    data[$scope.passwords[password]] = $scope[
-                        $scope.passwords[password]
-                    ];
-                }
-                // Launch the adhoc job
-                Rest.setUrl(GetBasePath('inventory') + id + '/ad_hoc_commands/');
-                Rest.post(data)
-                    .then(({data}) => {
-                         Wait('stop');
-                         $state.go('adHocJobStdout', {id: data.id});
-                    })
-                    .catch(({data, status}) => {
-                        ProcessErrors($scope, data, status, adhocForm, {
-                            hdr: 'Error!',
-                            msg: 'Failed to launch adhoc command. POST ' +
-                                'returned status: ' + status });
-                    });
+            var password;
+            for (password in $scope.passwords) {
+                data[$scope.passwords[password]] = $scope[
+                    $scope.passwords[password]
+                ];
+            }
+            // Launch the adhoc job
+            Rest.setUrl(GetBasePath('inventory') + id + '/ad_hoc_commands/');
+            Rest.post(data)
+                .then(({data}) => {
+                     Wait('stop');
+                     $state.go('output', {id: data.id, type: 'command'});
+                })
+                .catch(({data, status}) => {
+                    ProcessErrors($scope, data, status, adhocForm, {
+                        hdr: 'Error!',
+                        msg: 'Failed to launch adhoc command. POST ' +
+                            'returned status: ' + status });
+                });
         });
 
         if ($scope.removeCreateLaunchDialog) {
@@ -301,11 +301,20 @@ function adhocController($q, $scope, $stateParams,
         });
     };
 
+    $scope.lookupCredential = function(){
+        $state.go('.credential', {
+            credential_search: {
+                credential_type: machineCredentialType,
+                page_size: '5',
+                page: '1'
+            }
+        });
+    };
 
 }
 
 export default ['$q', '$scope', '$stateParams',
     '$state', 'CheckPasswords', 'PromptForPasswords', 'CreateLaunchDialog', 'CreateSelect2',
      'adhocForm', 'GenerateForm', 'Rest', 'ProcessErrors', 'GetBasePath',
-    'GetChoices', 'KindChange', 'Wait', 'ParseTypeChange',
+    'GetChoices', 'KindChange', 'Wait', 'ParseTypeChange', 'machineCredentialType',
     adhocController];

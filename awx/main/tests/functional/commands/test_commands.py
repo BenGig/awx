@@ -1,10 +1,7 @@
 import sys
 import pytest
 
-try:
-    from cStringIO import StringIO
-except ImportError:
-    from StringIO import StringIO
+from io import StringIO
 
 from django.core.management import call_command
 
@@ -15,7 +12,6 @@ def run_command(name, *args, **options):
     command_runner = options.pop('command_runner', call_command)
     stdin_fileobj = options.pop('stdin_fileobj', None)
     options.setdefault('verbosity', 1)
-    options.setdefault('interactive', False)
     original_stdin = sys.stdin
     original_stdout = sys.stdout
     original_stderr = sys.stderr

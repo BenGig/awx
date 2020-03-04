@@ -5,12 +5,14 @@
 }
 
 .at-Panel-heading {
-    margin: 0;
+    margin-bottom: 20px;
     padding: 0;
 }
 
 .at-Panel-headingRow {
-    margin-bottom: 20px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
 }
 
 .at-Panel-dismiss {
@@ -34,7 +36,7 @@
     font-weight: normal;
     padding: 2px 10px;
     line-height: 10px;
-    background-color: #848992;
+    background-color: #646972;
     border-radius: 5px;
     display: inline-block;
     min-width: 10px;
@@ -42,5 +44,29 @@
     vertical-align: middle;
     white-space: nowrap;
     text-align: center;
-    margin-left: 5px;
+    margin-left: 10px;
+    margin-right: auto;
+
+    &--inline {
+        margin-right: @at-space-2x;
+        margin-left: 0;
+    }
+}
+
+.at-Panel-headingCustomContent {
+    display: flex;
+    flex: 1;
+}
+
+.at-Panel-label {
+    text-transform: uppercase;
+    color: @default-interface-txt;
+    font-size: 12px;
+    font-weight: normal!important;
+    width: 30%;
+    margin: @at-space-2x;
+
+    @media screen and (max-width: @breakpoint-md) {
+        flex: 2.5 0 auto;
+    }
 }

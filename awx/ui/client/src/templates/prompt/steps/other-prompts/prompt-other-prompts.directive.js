@@ -12,7 +12,9 @@ export default [ 'templateUrl',
         scope: {
             promptData: '=',
             otherPromptsForm: '=',
-            isActiveStep: '='
+            isActiveStep: '=',
+            validate: '=',
+            readOnlyPrompts: '<'
         },
         templateUrl: templateUrl('templates/prompt/steps/other-prompts/prompt-other-prompts'),
         controller: promptOtherPrompts,
@@ -26,7 +28,7 @@ export default [ 'templateUrl',
             const launchController = controllers[0];
             const promptOtherPromptsController = controllers[1];
 
-            promptOtherPromptsController.init(scope, launchController);
+            promptOtherPromptsController.init(scope, launchController, el);
         }
     };
 }];

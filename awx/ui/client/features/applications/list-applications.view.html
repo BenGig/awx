@@ -1,9 +1,8 @@
 <at-panel>
-    <at-panel-heading hide-dismiss="true">
-        APPLICATIONS
-        <span class="badge List-titleBadge">
-            {{ vm.applicationsCount }}
-        </span>
+    <at-panel-heading
+        title="{{:: vm.strings.get('list.PANEL_TITLE') }}"
+        badge="{{ vm.applicationsCount }}"
+        hide-dismiss="true">
     </at-panel-heading>
 
     <at-panel-body>
@@ -18,24 +17,33 @@
                 collection="collection"
                 search-tags="searchTags">
             </smart-search>
-            <div class="at-List-toolbarAction">
+            <div class="at-List-toolbarAction" ng-show="canAdd">
                 <button
                     type="button"
                     ui-sref="applications.add"
                     class="at-Button--add"
+                    id="button-add"
+                    aw-tool-tip="{{vm.tooltips.add}}"
+                    data-placement="top"
                     aria-haspopup="true"
                     aria-expanded="false">
                 </button>
             </div>
         </div>
-
+        <at-list-toolbar
+            ng-if="vm.applicationsCount > 0"
+            sort-only="true"
+            sort-value="vm.toolbarSortValue"
+            sort-options="vm.toolbarSortOptions"
+            on-sort="vm.onToolbarSort">
+        </at-list-toolbar>
         <at-list results="applications">
             <at-row ng-repeat="application in applications"
                 ng-class="{'at-Row--active': (application.id === vm.activeId)}">
                 <div class="at-Row-items">
                     <at-row-item
                         header-value="{{ application.name }}"
-                        header-link="/#/applications/{{ application.id }}">
+                        header-state="applications.edit({application_id:{{application.id}}})">
                     </at-row-item>
                     <at-row-item
                         label-value="{{:: vm.strings.get('list.ROW_ITEM_LABEL_ORGANIZATION') }}"
@@ -48,13 +56,9 @@
                     </at-row-item>
                 </div>
                 <div class="at-Row-actions">
-                    <!-- TODO: delete application should be based on user capabilities but that's not
-                    implemented in the api yet -->
-                    <at-row-action icon="fa-trash" ng-click="vm.deleteApplication(application)">
-                    </at-row-action>
-                    <!-- <at-row-action icon="fa-trash" ng-click="vm.deleteApplication(application)"
+                    <at-row-action icon="fa-trash" ng-click="vm.deleteApplication(application)"
                         ng-show="application.summary_fields.user_capabilities.delete">
-                    </at-row-action> -->
+                    </at-row-action>
                 </div>
             </at-row>
         </at-list>
@@ -63,7 +67,6 @@
         base-path="applications"
         iterator="application"
         dataset="application_dataset"
-        collection="applications"
-        query-set="application_queryset">
+        collection="applications">
     </paginate>
 </at-panel>

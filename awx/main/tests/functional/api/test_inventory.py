@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 import pytest
-import mock
+from unittest import mock
 
 from django.core.exceptions import ValidationError
 
@@ -41,10 +41,6 @@ def test_inventory_source_notification_on_cloud_only(get, post, inventory_source
     cloud_is.save()
 
     not_is = inventory_source_factory("not_ec2")
-
-    url = reverse('api:inventory_source_notification_templates_any_list', kwargs={'pk': cloud_is.id})
-    response = post(url, dict(id=notification_template.id), u)
-    assert response.status_code == 204
 
     url = reverse('api:inventory_source_notification_templates_success_list', kwargs={'pk': not_is.id})
     response = post(url, dict(id=notification_template.id), u)
@@ -126,9 +122,8 @@ def test_list_cannot_order_by_unsearchable_field(get, organization, alice, order
         )
         custom_script.admin_role.members.add(alice)
 
-    response = get(reverse('api:inventory_script_list'), alice,
-                   QUERY_STRING='order_by=%s' % order_by, status=400)
-    assert response.status_code == 400
+    get(reverse('api:inventory_script_list'), alice,
+        QUERY_STRING='order_by=%s' % order_by, expect=403)
 
 
 @pytest.mark.parametrize("role_field,expected_status_code", [
@@ -282,6 +277,36 @@ def test_host_filter_unicode(post, admin_user, organization):
     assert si.host_filter == u'ansible_facts__ansible_distribution=レッドハット'
 
 
+@pytest.mark.django_db
+@pytest.mark.parametrize("lookup", ['icontains', 'has_keys'])
+def test_host_filter_invalid_ansible_facts_lookup(post, admin_user, organization, lookup):
+    resp = post(
+        reverse('api:inventory_list'),
+        data={
+            'name': 'smart inventory', 'kind': 'smart',
+            'organization': organization.pk,
+            'host_filter': u'ansible_facts__ansible_distribution__{}=cent'.format(lookup)
+        },
+        user=admin_user,
+        expect=400
+    )
+    assert 'ansible_facts does not support searching with __{}'.format(lookup) in json.dumps(resp.data)
+
+
+@pytest.mark.django_db
+def test_host_filter_ansible_facts_exact(post, admin_user, organization):
+    post(
+        reverse('api:inventory_list'),
+        data={
+            'name': 'smart inventory', 'kind': 'smart',
+            'organization': organization.pk,
+            'host_filter': 'ansible_facts__ansible_distribution__exact="CentOS"'
+        },
+        user=admin_user,
+        expect=201
+    )
+
+
 @pytest.mark.parametrize("role_field,expected_status_code", [
     (None, 403),
     ('admin_role', 201),
@@ -295,6 +320,24 @@ def test_create_inventory_host(post, inventory, alice, role_field, expected_stat
     if role_field:
         getattr(inventory, role_field).members.add(alice)
     post(reverse('api:inventory_hosts_list', kwargs={'pk': inventory.id}), data, alice, expect=expected_status_code)
+
+
+@pytest.mark.parametrize("hosts,expected_status_code", [
+    (1, 201),
+    (2, 201),
+    (3, 201),
+])
+@pytest.mark.django_db
+def test_create_inventory_host_with_limits(post, admin_user, inventory, hosts, expected_status_code):
+    # The per-Organization host limits functionality should be a no-op on AWX.
+    inventory.organization.max_hosts = 2
+    inventory.organization.save()
+    for i in range(hosts):
+        inventory.hosts.create(name="Existing host %i" % i)
+
+    data = {'name': 'New name', 'description': 'Hello world'}
+    post(reverse('api:inventory_hosts_list', kwargs={'pk': inventory.id}),
+         data, admin_user, expect=expected_status_code)
 
 
 @pytest.mark.parametrize("role_field,expected_status_code", [
@@ -325,6 +368,18 @@ def test_edit_inventory_host(put, host, alice, role_field, expected_status_code)
     if role_field:
         getattr(host.inventory, role_field).members.add(alice)
     put(reverse('api:host_detail', kwargs={'pk': host.id}), data, alice, expect=expected_status_code)
+
+
+@pytest.mark.django_db
+def test_edit_inventory_host_with_limits(put, host, admin_user):
+    # The per-Organization host limits functionality should be a no-op on AWX.
+    inventory = host.inventory
+    inventory.organization.max_hosts = 1
+    inventory.organization.save()
+    inventory.hosts.create(name='Alternate host')
+
+    data = {'name': 'New name', 'description': 'Hello world'}
+    put(reverse('api:host_detail', kwargs={'pk': host.id}), data, admin_user, expect=200)
 
 
 @pytest.mark.parametrize("role_field,expected_status_code", [
@@ -364,6 +419,132 @@ def test_inventory_source_vars_prohibition(post, inventory, admin_user):
                  admin_user, expect=400)
     assert 'prohibited environment variable' in r.data['source_vars'][0]
     assert 'FOOBAR' in r.data['source_vars'][0]
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize('role,expect', [
+    ('admin_role', 200),
+    ('use_role', 403),
+    ('adhoc_role', 403),
+    ('read_role', 403)
+])
+def test_action_view_permissions(patch, put, get, inventory, rando, role, expect):
+    getattr(inventory, role).members.add(rando)
+    url = reverse('api:inventory_variable_data', kwargs={'pk': inventory.pk})
+    # read_role and all other roles should be able to view
+    get(url=url, user=rando, expect=200)
+    patch(url=url, data={"host_filter": "bar"}, user=rando, expect=expect)
+    put(url=url, data={"fooooo": "bar"}, user=rando, expect=expect)
+
+
+@pytest.mark.django_db
+class TestInventorySourceCredential:
+    def test_need_cloud_credential(self, inventory, admin_user, post):
+        """Test that a cloud-based source requires credential"""
+        r = post(
+            url=reverse('api:inventory_source_list'),
+            data={'inventory': inventory.pk, 'name': 'foo', 'source': 'openstack'},
+            expect=400,
+            user=admin_user
+        )
+        assert 'Credential is required for a cloud source' in r.data['credential'][0]
+
+    def test_ec2_no_credential(self, inventory, admin_user, post):
+        """Test that an ec2 inventory source can be added with no credential"""
+        post(
+            url=reverse('api:inventory_source_list'),
+            data={'inventory': inventory.pk, 'name': 'fobar', 'source': 'ec2'},
+            expect=201,
+            user=admin_user
+        )
+
+    def test_validating_credential_type(self, organization, inventory, admin_user, post):
+        """Test that cloud sources must use their respective credential type"""
+        from awx.main.models.credential import Credential, CredentialType
+        openstack = CredentialType.defaults['openstack']()
+        openstack.save()
+        os_cred = Credential.objects.create(
+            credential_type=openstack, name='bar', organization=organization)
+        r = post(
+            url=reverse('api:inventory_source_list'),
+            data={
+                'inventory': inventory.pk, 'name': 'fobar', 'source': 'ec2',
+                'credential': os_cred.pk
+            },
+            expect=400,
+            user=admin_user
+        )
+        assert 'Cloud-based inventory sources (such as ec2)' in r.data['credential'][0]
+        assert 'require credentials for the matching cloud service' in r.data['credential'][0]
+
+    def test_vault_credential_not_allowed(self, project, inventory, vault_credential, admin_user, post):
+        """Vault credentials cannot be associated via the deprecated field"""
+        # TODO: when feature is added, add tests to use the related credentials
+        # endpoint for multi-vault attachment
+        r = post(
+            url=reverse('api:inventory_source_list'),
+            data={
+                'inventory': inventory.pk, 'name': 'fobar', 'source': 'scm',
+                'source_project': project.pk, 'source_path': '',
+                'credential': vault_credential.pk
+            },
+            expect=400,
+            user=admin_user
+        )
+        assert 'Credentials of type insights and vault' in r.data['credential'][0]
+        assert 'disallowed for scm inventory sources' in r.data['credential'][0]
+
+    def test_vault_credential_not_allowed_via_related(
+            self, project, inventory, vault_credential, admin_user, post):
+        """Vault credentials cannot be associated via related endpoint"""
+        inv_src = InventorySource.objects.create(
+            inventory=inventory, name='foobar', source='scm',
+            source_project=project, source_path=''
+        )
+        r = post(
+            url=reverse('api:inventory_source_credentials_list', kwargs={'pk': inv_src.pk}),
+            data={
+                'id': vault_credential.pk
+            },
+            expect=400,
+            user=admin_user
+        )
+        assert 'Credentials of type insights and vault' in r.data['msg']
+        assert 'disallowed for scm inventory sources' in r.data['msg']
+
+    def test_credentials_relationship_mapping(self, project, inventory, organization, admin_user, post, patch):
+        """The credentials relationship is used to manage the cloud credential
+        this test checks that replacement works"""
+        from awx.main.models.credential import Credential, CredentialType
+        openstack = CredentialType.defaults['openstack']()
+        openstack.save()
+        os_cred = Credential.objects.create(
+            credential_type=openstack, name='bar', organization=organization)
+        r = post(
+            url=reverse('api:inventory_source_list'),
+            data={
+                'inventory': inventory.pk, 'name': 'fobar', 'source': 'scm',
+                'source_project': project.pk, 'source_path': '',
+                'credential': os_cred.pk
+            },
+            expect=201,
+            user=admin_user
+        )
+        aws = CredentialType.defaults['aws']()
+        aws.save()
+        aws_cred = Credential.objects.create(
+            credential_type=aws, name='bar2', organization=organization)
+        inv_src = InventorySource.objects.get(pk=r.data['id'])
+        assert list(inv_src.credentials.values_list('id', flat=True)) == [os_cred.pk]
+        patch(
+            url=inv_src.get_absolute_url(),
+            data={
+                'credential': aws_cred.pk
+            },
+            expect=200,
+            user=admin_user
+        )
+        assert list(inv_src.credentials.values_list('id', flat=True)) == [aws_cred.pk]
 
 
 @pytest.mark.django_db
@@ -418,9 +599,9 @@ class TestControlledBySCM:
         delete(inv_src.get_absolute_url(), admin_user, expect=204)
         assert scm_inventory.inventory_sources.count() == 0
 
-    def test_adding_inv_src_ok(self, post, scm_inventory, admin_user):
-        post(reverse('api:inventory_inventory_sources_list', kwargs={'version': 'v2', 'pk': scm_inventory.id}),
-             {'name': 'new inv src', 'update_on_project_update': False, 'source': 'scm', 'overwrite_vars': True},
+    def test_adding_inv_src_ok(self, post, scm_inventory, project, admin_user):
+        post(reverse('api:inventory_inventory_sources_list', kwargs={'pk': scm_inventory.id}),
+             {'name': 'new inv src', 'source_project': project.pk, 'update_on_project_update': False, 'source': 'scm', 'overwrite_vars': True},
              admin_user, expect=201)
 
     def test_adding_inv_src_prohibited(self, post, scm_inventory, project, admin_user):
@@ -430,7 +611,7 @@ class TestControlledBySCM:
 
     def test_two_update_on_project_update_inv_src_prohibited(self, patch, scm_inventory, factory_scm_inventory, project, admin_user):
         scm_inventory2 = factory_scm_inventory(name="scm_inventory2")
-        res = patch(reverse('api:inventory_source_detail', kwargs={'version': 'v2', 'pk': scm_inventory2.id}),
+        res = patch(reverse('api:inventory_source_detail', kwargs={'pk': scm_inventory2.id}),
                     {'update_on_project_update': True,},
                     admin_user, expect=400)
         content = json.loads(res.content)
@@ -450,6 +631,17 @@ class TestInsightsCredential:
         patch(insights_inventory.get_absolute_url(),
               {'insights_credential': insights_credential.id}, admin_user,
               expect=200)
+
+    def test_insights_credential_protection(self, post, patch, insights_inventory, alice, insights_credential):
+        insights_inventory.organization.admin_role.members.add(alice)
+        insights_inventory.admin_role.members.add(alice)
+        post(reverse('api:inventory_list'), {
+            "name": "test",
+            "organization": insights_inventory.organization.id,
+            "insights_credential": insights_credential.id
+        }, alice, expect=403)
+        patch(insights_inventory.get_absolute_url(),
+              {'insights_credential': insights_credential.id}, alice, expect=403)
 
     def test_non_insights_credential(self, patch, insights_inventory, admin_user, scm_credential):
         patch(insights_inventory.get_absolute_url(),

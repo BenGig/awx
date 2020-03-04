@@ -9,7 +9,7 @@
 
 # TODO:
 #   * more jq examples
-#   * optional folder heriarchy
+#   * optional folder hierarchy
 
 """
 $ jq '._meta.hostvars[].config' data.json | head
@@ -38,10 +38,10 @@ import sys
 import uuid
 from time import time
 
-import six
 from jinja2 import Environment
-from six import integer_types, string_types
-from six.moves import configparser
+
+from ansible.module_utils.six import integer_types, PY3
+from ansible.module_utils.six.moves import configparser
 
 try:
     import argparse
@@ -99,6 +99,7 @@ class VMWareInventory(object):
     host_filters = []
     skip_keys = []
     groupby_patterns = []
+    groupby_custom_field_excludes = []
 
     safe_types = [bool, str, float, None] + list(integer_types)
     iter_types = [dict, list]
@@ -152,7 +153,7 @@ class VMWareInventory(object):
             try:
                 text = str(text)
             except UnicodeEncodeError:
-                text = text.encode('ascii', 'ignore')
+                text = text.encode('utf-8')
             print('%s %s' % (datetime.datetime.now(), text))
 
     def show(self):
@@ -186,14 +187,14 @@ class VMWareInventory(object):
 
     def write_to_cache(self, data):
         ''' Dump inventory to json file '''
-        with open(self.cache_path_cache, 'wb') as f:
-            f.write(json.dumps(data))
+        with open(self.cache_path_cache, 'w') as f:
+            f.write(json.dumps(data, indent=2))
 
     def get_inventory_from_cache(self):
         ''' Read in jsonified inventory '''
 
         jdata = None
-        with open(self.cache_path_cache, 'rb') as f:
+        with open(self.cache_path_cache, 'r') as f:
             jdata = f.read()
         return json.loads(jdata)
 
@@ -230,10 +231,11 @@ class VMWareInventory(object):
             'groupby_patterns': '{{ guest.guestid }},{{ "templates" if config.template else "guests"}}',
             'lower_var_keys': True,
             'custom_field_group_prefix': 'vmware_tag_',
+            'groupby_custom_field_excludes': '',
             'groupby_custom_field': False}
         }
 
-        if six.PY3:
+        if PY3:
             config = configparser.ConfigParser()
         else:
             config = configparser.SafeConfigParser()
@@ -268,7 +270,7 @@ class VMWareInventory(object):
         self.port = int(os.environ.get('VMWARE_PORT', config.get('vmware', 'port')))
         self.username = os.environ.get('VMWARE_USERNAME', config.get('vmware', 'username'))
         self.debugl('username is %s' % self.username)
-        self.password = os.environ.get('VMWARE_PASSWORD', config.get('vmware', 'password'))
+        self.password = os.environ.get('VMWARE_PASSWORD', config.get('vmware', 'password', raw=True))
         self.validate_certs = os.environ.get('VMWARE_VALIDATE_CERTS', config.get('vmware', 'validate_certs'))
         if self.validate_certs in ['no', 'false', 'False', False]:
             self.validate_certs = False
@@ -287,13 +289,29 @@ class VMWareInventory(object):
         self.debugl('lower keys is %s' % self.lowerkeys)
         self.skip_keys = list(config.get('vmware', 'skip_keys').split(','))
         self.debugl('skip keys is %s' % self.skip_keys)
-        self.host_filters = list(config.get('vmware', 'host_filters').split(','))
+        temp_host_filters = list(config.get('vmware', 'host_filters').split('}},'))
+        for host_filter in temp_host_filters:
+            host_filter = host_filter.rstrip()
+            if host_filter != "":
+                if not host_filter.endswith("}}"):
+                    host_filter += "}}"
+                self.host_filters.append(host_filter)
         self.debugl('host filters are %s' % self.host_filters)
-        self.groupby_patterns = list(config.get('vmware', 'groupby_patterns').split(','))
+
+        temp_groupby_patterns = list(config.get('vmware', 'groupby_patterns').split('}},'))
+        for groupby_pattern in temp_groupby_patterns:
+            groupby_pattern = groupby_pattern.rstrip()
+            if groupby_pattern != "":
+                if not groupby_pattern.endswith("}}"):
+                    groupby_pattern += "}}"
+                self.groupby_patterns.append(groupby_pattern)
         self.debugl('groupby patterns are %s' % self.groupby_patterns)
+        temp_groupby_custom_field_excludes = config.get('vmware', 'groupby_custom_field_excludes')
+        self.groupby_custom_field_excludes = [x.strip('"') for x in [y.strip("'") for y in temp_groupby_custom_field_excludes.split(",")]]
+        self.debugl('groupby exclude strings are %s' % self.groupby_custom_field_excludes)
 
         # Special feature to disable the brute force serialization of the
-        # virtulmachine objects. The key name for these properties does not
+        # virtual machine objects. The key name for these properties does not
         # matter because the values are just items for a larger list.
         if config.has_section('properties'):
             self.guest_props = []
@@ -326,16 +344,29 @@ class VMWareInventory(object):
                   'pwd': self.password,
                   'port': int(self.port)}
 
-        if hasattr(ssl, 'SSLContext') and not self.validate_certs:
+        if self.validate_certs and hasattr(ssl, 'SSLContext'):
+            context = ssl.SSLContext(ssl.PROTOCOL_SSLv23)
+            context.verify_mode = ssl.CERT_REQUIRED
+            context.check_hostname = True
+            kwargs['sslContext'] = context
+        elif self.validate_certs and not hasattr(ssl, 'SSLContext'):
+            sys.exit('pyVim does not support changing verification mode with python < 2.7.9. Either update '
+                     'python or use validate_certs=false.')
+        elif not self.validate_certs and hasattr(ssl, 'SSLContext'):
             context = ssl.SSLContext(ssl.PROTOCOL_SSLv23)
             context.verify_mode = ssl.CERT_NONE
+            context.check_hostname = False
             kwargs['sslContext'] = context
+        elif not self.validate_certs and not hasattr(ssl, 'SSLContext'):
+            # Python 2.7.9 < or RHEL/CentOS 7.4 <
+            pass
 
         return self._get_instances(kwargs)
 
     def _get_instances(self, inkwargs):
         ''' Make API calls '''
         instances = []
+        si = None
         try:
             si = SmartConnect(**inkwargs)
         except ssl.SSLError as connection_error:
@@ -373,7 +404,7 @@ class VMWareInventory(object):
             instances = [x for x in instances if x.name == self.args.host]
 
         instance_tuples = []
-        for instance in sorted(instances):
+        for instance in instances:
             if self.guest_props:
                 ifacts = self.facts_from_proplist(instance)
             else:
@@ -385,7 +416,7 @@ class VMWareInventory(object):
             cfm = content.customFieldsManager
             if cfm is not None and cfm.field:
                 for f in cfm.field:
-                    if f.managedObjectType == vim.VirtualMachine:
+                    if not f.managedObjectType or f.managedObjectType == vim.VirtualMachine:
                         self.custom_fields[f.key] = f.name
                 self.debugl('%d custom fields collected' % len(self.custom_fields))
         except vmodl.RuntimeFault as exc:
@@ -482,16 +513,15 @@ class VMWareInventory(object):
             for k, v in inventory['_meta']['hostvars'].items():
                 if 'customvalue' in v:
                     for tv in v['customvalue']:
-                        if not isinstance(tv['value'], string_types):
-                            continue
-
                         newkey = None
                         field_name = self.custom_fields[tv['key']] if tv['key'] in self.custom_fields else tv['key']
+                        if field_name in self.groupby_custom_field_excludes:
+                            continue
                         values = []
                         keylist = map(lambda x: x.strip(), tv['value'].split(','))
                         for kl in keylist:
                             try:
-                                newkey = self.config.get('vmware', 'custom_field_group_prefix') + field_name + '_' + kl
+                                newkey = "%s%s_%s" % (self.config.get('vmware', 'custom_field_group_prefix'), str(field_name), kl)
                                 newkey = newkey.strip()
                             except Exception as e:
                                 self.debugl(e)
@@ -509,7 +539,6 @@ class VMWareInventory(object):
 
     def create_template_mapping(self, inventory, pattern, dtype='string'):
         ''' Return a hash of uuid to templated string from pattern '''
-
         mapping = {}
         for k, v in inventory['_meta']['hostvars'].items():
             t = self.env.from_string(pattern)
@@ -545,7 +574,15 @@ class VMWareInventory(object):
 
             if '.' not in prop:
                 # props without periods are direct attributes of the parent
-                rdata[key] = getattr(vm, prop)
+                vm_property = getattr(vm, prop)
+                if isinstance(vm_property, vim.CustomFieldsManager.Value.Array):
+                    temp_vm_property = []
+                    for vm_prop in vm_property:
+                        temp_vm_property.append({'key': vm_prop.key,
+                                                 'value': vm_prop.value})
+                    rdata[key] = temp_vm_property
+                else:
+                    rdata[key] = vm_property
             else:
                 # props with periods are subkeys of parent attributes
                 parts = prop.split('.')
@@ -591,7 +628,14 @@ class VMWareInventory(object):
                         lastref = lastref[x]
                     else:
                         lastref[x] = val
-
+        if self.args.debug:
+            self.debugl("For %s" % vm.name)
+            for key in list(rdata.keys()):
+                if isinstance(rdata[key], dict):
+                    for ikey in list(rdata[key].keys()):
+                        self.debugl("Property '%s.%s' has value '%s'" % (key, ikey, rdata[key][ikey]))
+                else:
+                    self.debugl("Property '%s' has value '%s'" % (key, rdata[key]))
         return rdata
 
     def facts_from_vobj(self, vobj, level=0):
@@ -662,7 +706,7 @@ class VMWareInventory(object):
             if vobj.isalnum():
                 rdata = vobj
             else:
-                rdata = vobj.decode('ascii', 'ignore')
+                rdata = vobj.encode('utf-8').decode('utf-8')
         elif issubclass(type(vobj), bool) or isinstance(vobj, bool):
             rdata = vobj
         elif issubclass(type(vobj), integer_types) or isinstance(vobj, integer_types):

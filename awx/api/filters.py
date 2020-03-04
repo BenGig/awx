@@ -4,11 +4,12 @@
 # Python
 import re
 import json
+from functools import reduce
 
 # Django
 from django.core.exceptions import FieldError, ValidationError
 from django.db import models
-from django.db.models import Q
+from django.db.models import Q, CharField, IntegerField, BooleanField
 from django.db.models.fields import FieldDoesNotExist
 from django.db.models.fields.related import ForeignObjectRel, ManyToManyField, ForeignKey
 from django.contrib.contenttypes.models import ContentType
@@ -23,21 +24,6 @@ from rest_framework.filters import BaseFilterBackend
 # AWX
 from awx.main.utils import get_type_for_model, to_python_boolean
 from awx.main.utils.db import get_all_field_names
-from awx.main.models.credential import CredentialType
-from awx.main.models.rbac import RoleAncestorEntry
-
-
-class V1CredentialFilterBackend(BaseFilterBackend):
-    '''
-    For /api/v1/ requests, filter out v2 (custom) credentials
-    '''
-
-    def filter_queryset(self, request, queryset, view):
-        # TODO: remove in 3.3
-        from awx.api.versioning import get_request_version
-        if get_request_version(request) == 1:
-            queryset = queryset.filter(credential_type__managed_by_tower=True)
-        return queryset
 
 
 class TypeFilterBackend(BaseFilterBackend):
@@ -65,7 +51,7 @@ class TypeFilterBackend(BaseFilterBackend):
                 model = queryset.model
                 model_type = get_type_for_model(model)
                 if 'polymorphic_ctype' in get_all_field_names(model):
-                    types_pks = set([v for k,v in types_map.items() if k in types])
+                    types_pks = set([v for k, v in types_map.items() if k in types])
                     queryset = queryset.filter(polymorphic_ctype_id__in=types_pks)
                 elif model_type in types:
                     queryset = queryset
@@ -77,76 +63,115 @@ class TypeFilterBackend(BaseFilterBackend):
             raise ParseError(*e.args)
 
 
+def get_fields_from_path(model, path):
+    '''
+    Given a Django ORM lookup path (possibly over multiple models)
+    Returns the fields in the line, and also the revised lookup path
+    ex., given
+        model=Organization
+        path='project__timeout'
+    returns tuple of fields traversed as well and a corrected path,
+    for special cases we do substitutions
+        ([<IntegerField for timeout>], 'project__timeout')
+    '''
+    # Store of all the fields used to detect repeats
+    field_list = []
+    new_parts = []
+    for name in path.split('__'):
+        if model is None:
+            raise ParseError(_('No related model for field {}.').format(name))
+        # HACK: Make project and inventory source filtering by old field names work for backwards compatibility.
+        if model._meta.object_name in ('Project', 'InventorySource'):
+            name = {
+                'current_update': 'current_job',
+                'last_update': 'last_job',
+                'last_update_failed': 'last_job_failed',
+                'last_updated': 'last_job_run',
+            }.get(name, name)
+
+        if name == 'type' and 'polymorphic_ctype' in get_all_field_names(model):
+            name = 'polymorphic_ctype'
+            new_parts.append('polymorphic_ctype__model')
+        else:
+            new_parts.append(name)
+
+        if name in getattr(model, 'PASSWORD_FIELDS', ()):
+            raise PermissionDenied(_('Filtering on password fields is not allowed.'))
+        elif name == 'pk':
+            field = model._meta.pk
+        else:
+            name_alt = name.replace("_", "")
+            if name_alt in model._meta.fields_map.keys():
+                field = model._meta.fields_map[name_alt]
+                new_parts.pop()
+                new_parts.append(name_alt)
+            else:
+                field = model._meta.get_field(name)
+            if isinstance(field, ForeignObjectRel) and getattr(field.field, '__prevent_search__', False):
+                raise PermissionDenied(_('Filtering on %s is not allowed.' % name))
+            elif getattr(field, '__prevent_search__', False):
+                raise PermissionDenied(_('Filtering on %s is not allowed.' % name))
+        if field in field_list:
+            # Field traversed twice, could create infinite JOINs, DoSing Tower
+            raise ParseError(_('Loops not allowed in filters, detected on field {}.').format(field.name))
+        field_list.append(field)
+        model = getattr(field, 'related_model', None)
+
+    return field_list, '__'.join(new_parts)
+
+
+def get_field_from_path(model, path):
+    '''
+    Given a Django ORM lookup path (possibly over multiple models)
+    Returns the last field in the line, and the revised lookup path
+    ex.
+        (<IntegerField for timeout>, 'project__timeout')
+    '''
+    field_list, new_path = get_fields_from_path(model, path)
+    return (field_list[-1], new_path)
+
+
 class FieldLookupBackend(BaseFilterBackend):
     '''
     Filter using field lookups provided via query string parameters.
     '''
 
     RESERVED_NAMES = ('page', 'page_size', 'format', 'order', 'order_by',
-                      'search', 'type', 'host_filter')
+                      'search', 'type', 'host_filter', 'count_disabled', 'no_truncate')
 
     SUPPORTED_LOOKUPS = ('exact', 'iexact', 'contains', 'icontains',
                          'startswith', 'istartswith', 'endswith', 'iendswith',
                          'regex', 'iregex', 'gt', 'gte', 'lt', 'lte', 'in',
                          'isnull', 'search')
 
-    def get_field_from_lookup(self, model, lookup):
-        field = None
-        parts = lookup.split('__')
-        if parts and parts[-1] not in self.SUPPORTED_LOOKUPS:
-            parts.append('exact')
+    # A list of fields that we know can be filtered on without the possiblity
+    # of introducing duplicates
+    NO_DUPLICATES_WHITELIST = (CharField, IntegerField, BooleanField)
+
+    def get_fields_from_lookup(self, model, lookup):
+
+        if '__' in lookup and lookup.rsplit('__', 1)[-1] in self.SUPPORTED_LOOKUPS:
+            path, suffix = lookup.rsplit('__', 1)
+        else:
+            path = lookup
+            suffix = 'exact'
+
+        if not path:
+            raise ParseError(_('Query string field name not provided.'))
+
         # FIXME: Could build up a list of models used across relationships, use
         # those lookups combined with request.user.get_queryset(Model) to make
         # sure user cannot query using objects he could not view.
-        new_parts = []
+        field_list, new_path = get_fields_from_path(model, path)
 
-        # Store of all the fields used to detect repeats
-        field_set = set([])
+        new_lookup = new_path
+        new_lookup = '__'.join([new_path, suffix])
+        return field_list, new_lookup
 
-        for name in parts[:-1]:
-            # HACK: Make project and inventory source filtering by old field names work for backwards compatibility.
-            if model._meta.object_name in ('Project', 'InventorySource'):
-                name = {
-                    'current_update': 'current_job',
-                    'last_update': 'last_job',
-                    'last_update_failed': 'last_job_failed',
-                    'last_updated': 'last_job_run',
-                }.get(name, name)
-
-            if name == 'type' and 'polymorphic_ctype' in get_all_field_names(model):
-                name = 'polymorphic_ctype'
-                new_parts.append('polymorphic_ctype__model')
-            else:
-                new_parts.append(name)
-
-            if name in getattr(model, 'PASSWORD_FIELDS', ()):
-                raise PermissionDenied(_('Filtering on password fields is not allowed.'))
-            elif name == 'pk':
-                field = model._meta.pk
-            else:
-                name_alt = name.replace("_", "")
-                if name_alt in model._meta.fields_map.keys():
-                    field = model._meta.fields_map[name_alt]
-                    new_parts.pop()
-                    new_parts.append(name_alt)
-                else:
-                    field = model._meta.get_field(name)
-                if 'auth' in name or 'token' in name:
-                    raise PermissionDenied(_('Filtering on %s is not allowed.' % name))
-                if isinstance(field, ForeignObjectRel) and getattr(field.field, '__prevent_search__', False):
-                    raise PermissionDenied(_('Filtering on %s is not allowed.' % name))
-                elif getattr(field, '__prevent_search__', False):
-                    raise PermissionDenied(_('Filtering on %s is not allowed.' % name))
-            if field in field_set:
-                # Field traversed twice, could create infinite JOINs, DoSing Tower
-                raise ParseError(_('Loops not allowed in filters, detected on field {}.').format(field.name))
-            field_set.add(field)
-            model = getattr(field, 'related_model', None) or field.model
-
-        if parts:
-            new_parts.append(parts[-1])
-        new_lookup = '__'.join(new_parts)
-        return field, new_lookup
+    def get_field_from_lookup(self, model, lookup):
+        '''Method to match return type of single field, if needed.'''
+        field_list, new_lookup = self.get_fields_from_lookup(model, lookup)
+        return (field_list[-1], new_lookup)
 
     def to_python_related(self, value):
         value = force_text(value)
@@ -173,11 +198,14 @@ class FieldLookupBackend(BaseFilterBackend):
 
     def value_to_python(self, model, lookup, value):
         try:
-            lookup = lookup.encode("ascii")
+            lookup.encode("ascii")
         except UnicodeEncodeError:
             raise ValueError("%r is not an allowed field name. Must be ascii encodable." % lookup)
 
-        field, new_lookup = self.get_field_from_lookup(model, lookup)
+        field_list, new_lookup = self.get_fields_from_lookup(model, lookup)
+        field = field_list[-1]
+
+        needs_distinct = (not all(isinstance(f, self.NO_DUPLICATES_WHITELIST) for f in field_list))
 
         # Type names are stored without underscores internally, but are presented and
         # and serialized over the API containing underscores so we remove `_`
@@ -204,12 +232,12 @@ class FieldLookupBackend(BaseFilterBackend):
                 raise ValueError('%s is not searchable' % new_lookup[:-8])
             new_lookups = []
             for rm_field in related_model._meta.fields:
-                if rm_field.name in ('username', 'first_name', 'last_name', 'email', 'name', 'description'):
+                if rm_field.name in ('username', 'first_name', 'last_name', 'email', 'name', 'description', 'playbook'):
                     new_lookups.append('{}__{}__icontains'.format(new_lookup[:-8], rm_field.name))
-            return value, new_lookups
+            return value, new_lookups, needs_distinct
         else:
             value = self.value_to_python_for_field(field, value)
-        return value, new_lookup
+        return value, new_lookup, needs_distinct
 
     def filter_queryset(self, request, queryset, view):
         try:
@@ -219,7 +247,12 @@ class FieldLookupBackend(BaseFilterBackend):
             or_filters = []
             chain_filters = []
             role_filters = []
-            search_filters = []
+            search_filters = {}
+            needs_distinct = False
+            # Can only have two values: 'AND', 'OR'
+            # If 'AND' is used, an iterm must satisfy all condition to show up in the results.
+            # If 'OR' is used, an item just need to satisfy one condition to appear in results.
+            search_filter_relation = 'OR'
             for key, values in request.query_params.lists():
                 if key in self.RESERVED_NAMES:
                     continue
@@ -243,11 +276,16 @@ class FieldLookupBackend(BaseFilterBackend):
 
                 # Search across related objects.
                 if key.endswith('__search'):
+                    if values and ',' in values[0]:
+                        search_filter_relation = 'AND'
+                        values = reduce(lambda list1, list2: list1 + list2, [i.split(',') for i in values])
                     for value in values:
-                        search_value, new_keys = self.value_to_python(queryset.model, key, force_text(value))
+                        search_value, new_keys, _ = self.value_to_python(queryset.model, key, force_text(value))
                         assert isinstance(new_keys, list)
-                        for new_key in new_keys:
-                            search_filters.append((new_key, search_value))
+                        search_filters[search_value] = new_keys
+                    # by definition, search *only* joins across relations,
+                    # so it _always_ needs a .distinct()
+                    needs_distinct = True
                     continue
 
                 # Custom chain__ and or__ filters, mutually exclusive (both can
@@ -267,44 +305,13 @@ class FieldLookupBackend(BaseFilterBackend):
                     key = key[5:]
                     q_not = True
 
-                # Make legacy v1 Job/Template fields work for backwards compatability
-                # TODO: remove after API v1 deprecation period
-                if queryset.model._meta.object_name in ('JobTemplate', 'Job') and key in (
-                        'credential', 'vault_credential', 'cloud_credential', 'network_credential'
-                ) or queryset.model._meta.object_name in ('InventorySource', 'InventoryUpdate') and key == 'credential':
-                    key = 'credentials'
-
-                # Make legacy v1 Credential fields work for backwards compatability
-                # TODO: remove after API v1 deprecation period
-                #
-                # convert v1 `Credential.kind` queries to `Credential.credential_type__pk`
-                if queryset.model._meta.object_name == 'Credential' and key == 'kind':
-                    key = key.replace('kind', 'credential_type')
-
-                    if 'ssh' in values:
-                        # In 3.2, SSH and Vault became separate credential types, but in the v1 API,
-                        # they're both still "kind=ssh"
-                        # under the hood, convert `/api/v1/credentials/?kind=ssh` to
-                        # `/api/v1/credentials/?or__credential_type=<ssh_pk>&or__credential_type=<vault_pk>`
-                        values = set(values)
-                        values.add('vault')
-                        values = list(values)
-                        q_or = True
-
-                    for i, kind in enumerate(values):
-                        if kind == 'vault':
-                            type_ = CredentialType.objects.get(kind=kind)
-                        else:
-                            type_ = CredentialType.from_v1_kind(kind)
-                        if type_ is None:
-                            raise ParseError(_('cannot filter on kind %s') % kind)
-                        values[i] = type_.pk
-
                 # Convert value(s) to python and add to the appropriate list.
                 for value in values:
                     if q_int:
                         value = int(value)
-                    value, new_key = self.value_to_python(queryset.model, key, value)
+                    value, new_key, distinct = self.value_to_python(queryset.model, key, value)
+                    if distinct:
+                        needs_distinct = True
                     if q_chain:
                         chain_filters.append((q_not, new_key, value))
                     elif q_or:
@@ -321,12 +328,12 @@ class FieldLookupBackend(BaseFilterBackend):
                     else:
                         args.append(Q(**{k:v}))
                 for role_name in role_filters:
+                    if not hasattr(queryset.model, 'accessible_pk_qs'):
+                        raise ParseError(_(
+                            'Cannot apply role_level filter to this list because its model '
+                            'does not use roles for access control.'))
                     args.append(
-                        Q(pk__in=RoleAncestorEntry.objects.filter(
-                            ancestor__in=request.user.roles.all(),
-                            content_type_id=ContentType.objects.get_for_model(queryset.model).id,
-                            role_field=role_name
-                        ).values_list('object_id').distinct())
+                        Q(pk__in=queryset.model.accessible_pk_qs(request.user, role_name))
                     )
                 if or_filters:
                     q = Q()
@@ -336,18 +343,27 @@ class FieldLookupBackend(BaseFilterBackend):
                         else:
                             q |= Q(**{k:v})
                     args.append(q)
-                if search_filters:
+                if search_filters and search_filter_relation == 'OR':
                     q = Q()
-                    for k,v in search_filters:
-                        q |= Q(**{k:v})
+                    for term, constrains in search_filters.items():
+                        for constrain in constrains:
+                            q |= Q(**{constrain: term})
                     args.append(q)
+                elif search_filters and search_filter_relation == 'AND':
+                    for term, constrains in search_filters.items():
+                        q_chain = Q()
+                        for constrain in constrains:
+                            q_chain |= Q(**{constrain: term})
+                        queryset = queryset.filter(q_chain)
                 for n,k,v in chain_filters:
                     if n:
                         q = ~Q(**{k:v})
                     else:
                         q = Q(**{k:v})
                     queryset = queryset.filter(q)
-                queryset = queryset.filter(*args).distinct()
+                queryset = queryset.filter(*args)
+                if needs_distinct:
+                    queryset = queryset.distinct()
             return queryset
         except (FieldError, FieldDoesNotExist, ValueError, TypeError) as e:
             raise ParseError(e.args[0])
@@ -370,8 +386,10 @@ class OrderByBackend(BaseFilterBackend):
                         order_by = value.split(',')
                     else:
                         order_by = (value,)
+            if order_by is None:
+                order_by = self.get_default_ordering(view)
             if order_by:
-                order_by = self._strip_sensitive_model_fields(queryset.model, order_by)
+                order_by = self._validate_ordering_fields(queryset.model, order_by)
 
                 # Special handling of the type field for ordering. In this
                 # case, we're not sorting exactly on the type field, but
@@ -396,15 +414,23 @@ class OrderByBackend(BaseFilterBackend):
             # Return a 400 for invalid field names.
             raise ParseError(*e.args)
 
-    def _strip_sensitive_model_fields(self, model, order_by):
+    def get_default_ordering(self, view):
+        ordering = getattr(view, 'ordering', None)
+        if isinstance(ordering, str):
+            return (ordering,)
+        return ordering
+
+    def _validate_ordering_fields(self, model, order_by):
         for field_name in order_by:
             # strip off the negation prefix `-` if it exists
-            _field_name = field_name.split('-')[-1]
+            prefix = ''
+            path = field_name
+            if field_name[0] == '-':
+                prefix = field_name[0]
+                path = field_name[1:]
             try:
-                # if the field name is encrypted/sensitive, don't sort on it
-                if _field_name in getattr(model, 'PASSWORD_FIELDS', ()) or \
-                        getattr(model._meta.get_field(_field_name), '__prevent_search__', False):
-                    raise ParseError(_('cannot order by field %s') % _field_name)
-            except FieldDoesNotExist:
-                pass
-            yield field_name
+                field, new_path = get_field_from_path(model, path)
+                new_path = '{}{}'.format(prefix, new_path)
+            except (FieldError, FieldDoesNotExist) as e:
+                raise ParseError(e.args[0])
+            yield new_path

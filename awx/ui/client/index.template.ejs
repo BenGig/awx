@@ -1,12 +1,15 @@
 <!DOCTYPE html>
-<html>
+<html ng-csp="no-unsafe-eval">
 
 <head>
     <meta charset="utf-8">
     <meta http-equiv="X-UA-Compatible" content="IE=edge" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <link rel="shortcut icon" href="{{ STATIC_URL }}assets/favicon.ico?v={{version}}" />
-    <script>var $basePath = '{{ STATIC_URL }}'</script>
+    <script>
+        var $basePath = '{{ STATIC_URL }}';
+        window.liveUpdates = "{{ UI_LIVE_UPDATES_ENABLED }}" === "False" ? false : true;
+    </script>
     <% htmlWebpackPlugin.files.css.forEach(file => {%>
         <link href="{{ STATIC_URL }}<%= file %>" rel="stylesheet" />
     <% }) %>
@@ -21,8 +24,7 @@
         <toast></toast>
         <div class="container-fluid" id="content-container">
             <div class="row">
-                <div class="col-lg-12" ui-view>
-                </div>
+                <div class="col-lg-12" ui-view></div>
             </div>
             <!-- Password Dialog -->
             <div id="password-modal" style="display: none;"></div>
@@ -44,7 +46,7 @@
                         <div class="Modal-body" ng-bind-html="promptBody" id="prompt-body">
                         </div>
                         <div class="Modal-footer">
-                            <a href="#" data-target="#prompt-modal" data-dismiss="modal" id="prompt_cancel_btn" class="btn Modal-defaultButton Modal-footerButton" translate>CANCEL</a>
+                            <a href="#" data-target="#prompt-modal" data-dismiss="modal" id="prompt_cancel_btn" class="btn Modal-defaultButton Modal-footerButton" ng-bind="cancelActionText"></a>
                             <a href="" ng-hide="hideActionButton" ng-class="promptActionBtnClass" ng-click="promptAction()" id="prompt_action_btn" class="btn Modal-footerButton" ng-bind="promptActionText"></a>
                         </div>
                     </div>
@@ -58,8 +60,8 @@
                 <div class="modal-dialog">
                     <div class="modal-content">
                         <div class="modal-header">
-                            <button type="button" class="close" ng-hide="disableButtons" data-target="#alert-modal" data-dismiss="modal" class="modal" aria-hidden="true"><i class="fa fa-times-circle"></i></button>
                             <h3 id="alertHeader" ng-bind="alertHeader"></h3>
+                            <button type="button" class="close" ng-hide="disableButtons" data-target="#alert-modal" data-dismiss="modal" class="modal" aria-hidden="true"><i class="fa fa-times-circle"></i></button>
                         </div>
                         <div class="modal-body">
                             <div id="alert-modal-msg" class="alert" ng-bind-html="alertBody"></div>

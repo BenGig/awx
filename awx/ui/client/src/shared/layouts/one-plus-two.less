@@ -20,22 +20,17 @@
     flex: 1 0;
     height: @height;
     width: 100%;
-	margin-right: 20px;
-    .Panel{
-        height: 100%;
-    }
-	@media screen and (max-width: @breakpoint){
-		margin-right: 0px;
-		height: inherit;
+    margin-right: 20px;
+    @media screen and (max-width: @breakpoint){
+        height: inherit;
+        margin-right: 0px;
+        max-width: none;
 	}
 }
 
 .OnePlusTwo-right--panel(@height: 100%; @breakpoint: 900px) {
     height: @height;
     flex: 2 0;
-    .Panel{
-        height: 100%;
-    }
 	@media screen and (max-width: @breakpoint){
 		flex-direction: column;
 	}

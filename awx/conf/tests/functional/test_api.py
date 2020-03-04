@@ -1,5 +1,5 @@
 import pytest
-import mock
+from unittest import mock
 
 from rest_framework import serializers
 
@@ -8,6 +8,7 @@ from awx.main.utils.encryption import decrypt_field
 from awx.conf import fields
 from awx.conf.registry import settings_registry
 from awx.conf.models import Setting
+from awx.sso import fields as sso_fields
 
 
 @pytest.fixture
@@ -63,41 +64,6 @@ def test_non_admin_user_does_not_see_categories(api_request, dummy_setting, norm
             user=normal_user
         )
         assert not response.data['results']
-
-
-@pytest.mark.django_db
-@mock.patch(
-    'awx.conf.views.VERSION_SPECIFIC_CATEGORIES_TO_EXCLUDE',
-    {
-        1: set([]),
-        2: set(['foobar']),
-    }
-)
-def test_version_specific_category_slug_to_exclude_does_not_show_up(api_request, dummy_setting):
-    with dummy_setting(
-        'FOO_BAR',
-        field_class=fields.IntegerField,
-        category='FooBar',
-        category_slug='foobar'
-    ):
-        response = api_request(
-            'get',
-            reverse('api:setting_category_list',
-                    kwargs={'version': 'v2'})
-        )
-        for item in response.data['results']:
-            assert item['slug'] != 'foobar'
-        response = api_request(
-            'get',
-            reverse('api:setting_category_list',
-                    kwargs={'version': 'v1'})
-        )
-        contains = False
-        for item in response.data['results']:
-            if item['slug'] != 'foobar':
-                contains = True
-                break
-        assert contains
 
 
 @pytest.mark.django_db
@@ -172,7 +138,7 @@ def test_setting_signleton_retrieve_hierachy(api_request, dummy_setting):
 
 
 @pytest.mark.django_db
-def test_setting_signleton_retrieve_readonly(api_request, dummy_setting):
+def test_setting_singleton_retrieve_readonly(api_request, dummy_setting):
     with dummy_setting(
         'FOO_BAR',
         field_class=fields.IntegerField,
@@ -219,6 +185,30 @@ def test_setting_singleton_update(api_request, dummy_setting):
 
 
 @pytest.mark.django_db
+def test_setting_singleton_update_hybriddictfield_with_forbidden(api_request, dummy_setting):
+    # Some HybridDictField subclasses have a child of _Forbidden,
+    # indicating that only the defined fields can be filled in.  Make
+    # sure that the _Forbidden validator doesn't get used for the
+    # fields.  See also https://github.com/ansible/awx/issues/4099.
+    with dummy_setting(
+        'FOO_BAR',
+        field_class=sso_fields.SAMLOrgAttrField,
+        category='FooBar',
+        category_slug='foobar',
+    ), mock.patch('awx.conf.views.handle_setting_changes'):
+        api_request(
+            'patch',
+            reverse('api:setting_singleton_detail', kwargs={'category_slug': 'foobar'}),
+            data={'FOO_BAR': {'saml_admin_attr': 'Admins', 'saml_attr': 'Orgs'}}
+        )
+        response = api_request(
+            'get',
+            reverse('api:setting_singleton_detail', kwargs={'category_slug': 'foobar'})
+        )
+        assert response.data['FOO_BAR'] == {'saml_admin_attr': 'Admins', 'saml_attr': 'Orgs'}
+
+
+@pytest.mark.django_db
 def test_setting_singleton_update_dont_change_readonly_fields(api_request, dummy_setting):
     with dummy_setting(
         'FOO_BAR',
@@ -241,7 +231,7 @@ def test_setting_singleton_update_dont_change_readonly_fields(api_request, dummy
 
 
 @pytest.mark.django_db
-def test_setting_singleton_update_dont_change_encripted_mark(api_request, dummy_setting):
+def test_setting_singleton_update_dont_change_encrypted_mark(api_request, dummy_setting):
     with dummy_setting(
         'FOO_BAR',
         field_class=fields.CharField,
@@ -338,13 +328,14 @@ def test_setting_singleton_delete_no_read_only_fields(api_request, dummy_setting
 
 @pytest.mark.django_db
 def test_setting_logging_test(api_request):
-    with mock.patch('awx.conf.views.BaseHTTPSHandler.perform_test') as mock_func:
+    with mock.patch('awx.conf.views.AWXProxyHandler.perform_test') as mock_func:
         api_request(
             'post',
             reverse('api:setting_logging_test'),
             data={'LOG_AGGREGATOR_HOST': 'http://foobar', 'LOG_AGGREGATOR_TYPE': 'logstash'}
         )
-        test_arguments = mock_func.call_args[0][0]
-        assert test_arguments.LOG_AGGREGATOR_HOST == 'http://foobar'
-        assert test_arguments.LOG_AGGREGATOR_TYPE == 'logstash'
-        assert test_arguments.LOG_AGGREGATOR_LEVEL == 'DEBUG'
+        call = mock_func.call_args_list[0]
+        args, kwargs = call
+        given_settings = kwargs['custom_settings']
+        assert given_settings.LOG_AGGREGATOR_HOST == 'http://foobar'
+        assert given_settings.LOG_AGGREGATOR_TYPE == 'logstash'

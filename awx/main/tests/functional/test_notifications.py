@@ -1,11 +1,9 @@
-import mock
+from unittest import mock
 import pytest
 
 from requests.adapters import HTTPAdapter
 from requests.utils import select_proxy
 from requests.exceptions import ConnectionError
-
-from six.moves import xrange
 
 from awx.api.versioning import reverse
 from awx.main.models.notifications import NotificationTemplate, Notification
@@ -30,7 +28,7 @@ def test_basic_parameterization(get, post, user, organization):
                          description="test webhook",
                          organization=organization.id,
                          notification_type="webhook",
-                         notification_configuration=dict(url="http://localhost",
+                         notification_configuration=dict(url="http://localhost", disable_ssl_verification=False,
                                                          headers={"Test": "Header"})),
                     u)
     assert response.status_code == 201
@@ -44,6 +42,8 @@ def test_basic_parameterization(get, post, user, organization):
     assert 'notification_configuration' in response.data
     assert 'url' in response.data['notification_configuration']
     assert 'headers' in response.data['notification_configuration']
+    assert 'messages' in response.data
+    assert response.data['messages'] == {'started': None, 'success': None, 'error': None, 'workflow_approval': None}
 
 
 @pytest.mark.django_db
@@ -77,13 +77,13 @@ def test_inherited_notification_templates(get, post, user, organization, project
     u = user('admin-poster', True)
     url = reverse('api:notification_template_list')
     notification_templates = []
-    for nfiers in xrange(3):
+    for nfiers in range(3):
         response = post(url,
                         dict(name="test-webhook-{}".format(nfiers),
                              description="test webhook {}".format(nfiers),
                              organization=organization.id,
                              notification_type="webhook",
-                             notification_configuration=dict(url="http://localhost",
+                             notification_configuration=dict(url="http://localhost", disable_ssl_verification=False,
                                                              headers={"Test": "Header"})),
                         u)
         assert response.status_code == 201
@@ -94,26 +94,6 @@ def test_inherited_notification_templates(get, post, user, organization, project
     isrc.save()
     jt = JobTemplate.objects.create(name='test', inventory=i, project=project, playbook='debug.yml')
     jt.save()
-    url = reverse('api:organization_notification_templates_any_list', kwargs={'pk': organization.id})
-    response = post(url, dict(id=notification_templates[0]), u)
-    assert response.status_code == 204
-    url = reverse('api:project_notification_templates_any_list', kwargs={'pk': project.id})
-    response = post(url, dict(id=notification_templates[1]), u)
-    assert response.status_code == 204
-    url = reverse('api:job_template_notification_templates_any_list', kwargs={'pk': jt.id})
-    response = post(url, dict(id=notification_templates[2]), u)
-    assert response.status_code == 204
-    assert len(jt.notification_templates['any']) == 3
-    assert len(project.notification_templates['any']) == 2
-    assert len(isrc.notification_templates['any']) == 1
-
-
-@pytest.mark.django_db
-def test_notification_template_merging(get, post, user, organization, project, notification_template):
-    user('admin-poster', True)
-    organization.notification_templates_any.add(notification_template)
-    project.notification_templates_any.add(notification_template)
-    assert len(project.notification_templates['any']) == 1
 
 
 @pytest.mark.django_db
@@ -145,8 +125,8 @@ def test_custom_environment_injection(post, user, organization):
                          description="test webhook",
                          organization=organization.id,
                          notification_type="webhook",
-                         notification_configuration=dict(url="https://example.org",
-                                                         headers={"Test": "Header"})),
+                         notification_configuration=dict(url="https://example.org", disable_ssl_verification=False,
+                                                         http_method="POST", headers={"Test": "Header"})),
                     u)
     assert response.status_code == 201
     template = NotificationTemplate.objects.get(pk=response.data['id'])

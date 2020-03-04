@@ -34,7 +34,11 @@ import sys
 import json
 import requests
 from requests.auth import HTTPBasicAuth
-from urlparse import urljoin
+
+try:
+    from urlparse import urljoin
+except ImportError:
+    from urllib.parse import urljoin
 
 
 def parse_configuration():
@@ -54,7 +58,14 @@ def parse_configuration():
     host_name = os.environ.get("TOWER_HOST", None)
     username = os.environ.get("TOWER_USERNAME", None)
     password = os.environ.get("TOWER_PASSWORD", None)
-    ignore_ssl = os.environ.get("TOWER_IGNORE_SSL", "1").lower() in ("1", "yes", "true")
+    ignore_ssl = False
+    ssl_negative_var = os.environ.get("TOWER_IGNORE_SSL", None)
+    if ssl_negative_var:
+        ignore_ssl = ssl_negative_var.lower() in ("1", "yes", "true")
+    else:
+        ssl_positive_var = os.environ.get("TOWER_VERIFY_SSL", None)
+        if ssl_positive_var:
+            ignore_ssl = ssl_positive_var.lower() not in ('true', '1', 't', 'y', 'yes')
     inventory = os.environ.get("TOWER_INVENTORY", None)
     license_type = os.environ.get("TOWER_LICENSE_TYPE", "enterprise")
 
@@ -94,20 +105,25 @@ def read_tower_inventory(tower_host, tower_user, tower_pass, inventory, license_
                     raise RuntimeError("Tower server licenses must match: source: {} local: {}".format(source_type,
                                                                                                        license_type))
             else:
-                raise RuntimeError("Failed to validate the license of the remote Tower: {}".format(config_response.data))
+                raise RuntimeError("Failed to validate the license of the remote Tower: {}".format(config_response))
 
         response = requests.get(inventory_url,
                                 auth=HTTPBasicAuth(tower_user, tower_pass),
                                 verify=not ignore_ssl)
-        if response.ok:
+        if not response.ok:
+            # If the GET /api/v2/inventories/N/script is not HTTP 200, print the error code
+            msg = "Connection to remote host failed: {}".format(response)
+            if response.text:
+                msg += " with message: {}".format(response.text)
+            raise RuntimeError(msg)
+        try:
+            # Attempt to parse JSON
             return response.json()
-        json_reason = response.json()
-        reason = json_reason.get('detail', 'Retrieving Tower Inventory Failed')
+        except (ValueError, TypeError) as e:
+            # If the JSON parse fails, print the ValueError
+            raise RuntimeError("Failed to parse json from host: {}".format(e))
     except requests.ConnectionError as e:
-        reason = "Connection to remote host failed: {}".format(e)
-    except json.JSONDecodeError as e:
-        reason = "Failed to parse json from host: {}".format(e)
-    raise RuntimeError(reason)
+        raise RuntimeError("Connection to remote host failed: {}".format(e))
 
 
 def main():

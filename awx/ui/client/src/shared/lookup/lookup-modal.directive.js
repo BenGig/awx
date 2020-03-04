@@ -1,4 +1,4 @@
-export default ['templateUrl', function(templateUrl) {
+export default ['templateUrl', 'i18n', function(templateUrl, i18n) {
     return {
         restrict: 'E',
         replace: true,
@@ -55,8 +55,8 @@ export default ['templateUrl', function(templateUrl) {
                 $scope.$watch(list.name, function(){
                     selectRowIfPresent();
                 });
-
-                $scope.modalTitle = list.iterator.replace(/_/g, ' ');
+                let resource = list.iterator.replace(/_/g, ' ');
+                $scope.modalTitle = i18n._('Select') + ' ' + i18n._(resource);
 
                 listeners = eventService.addListeners([
                     [window, 'click', clickToHide]
@@ -74,7 +74,7 @@ export default ['templateUrl', function(templateUrl) {
                 }
             }
 
-            $scope.saveForm = function() {
+            $scope.saveForm = function () {
                 eventService.remove(listeners);
                 let list = $scope.list;
                 if($scope.currentSelection.name !== null) {
@@ -89,7 +89,7 @@ export default ['templateUrl', function(templateUrl) {
                 $state.go('^');
             };
 
-            $scope.toggle_row = function(selectedRow) {
+            $scope.toggle_row = function (selectedRow) {
                 let list = $scope.list;
                 let count = 0;
                 $scope[list.name].forEach(function(row) {

@@ -5,10 +5,11 @@
  *************************************************/
 import ReconnectingWebSocket from 'reconnectingwebsocket';
 export default
-['$rootScope', '$location', '$log','$state', '$q', 'i18n',
-    function ($rootScope, $location, $log, $state, $q, i18n) {
+['$rootScope', '$location', '$log','$state', '$q', 'i18n', 'GetBasePath', 'Rest', '$cookies',
+    function ($rootScope, $location, $log, $state, $q, i18n, GetBasePath, Rest, $cookies) {
         var needsResubscribing = false,
-        socketPromise = $q.defer();
+        socketPromise = $q.defer(),
+        needsRefreshAfterBlur;
         return {
             init: function() {
                 var self = this,
@@ -23,6 +24,26 @@ export default
                     protocol = 'wss';
                 }
                 url = `${protocol}://${host}/websocket/`;
+
+                // only toggle background tabbed sockets if the
+                // UI_LIVE_UPDATES_ENABLED flag is true in the settings file
+                if(window.liveUpdates){
+                    document.addEventListener('visibilitychange', function() {
+                        $log.debug(document.visibilityState);
+                        if(document.visibilityState === 'hidden'){
+                            window.liveUpdates = false;
+                        }
+                        else if(document.visibilityState === 'visible'){
+                            window.liveUpdates = true;
+                            if(needsRefreshAfterBlur){
+                                $state.go('.', null, {reload: true});
+                                needsRefreshAfterBlur = false;
+                            }
+
+                        }
+                    });
+                }
+
 
                 if (!$rootScope.sessionTimer || ($rootScope.sessionTimer && !$rootScope.sessionTimer.isExpired())) {
 
@@ -75,6 +96,20 @@ export default
                 $log.debug('Received From Server: ' + e.data);
 
                 var data = JSON.parse(e.data), str = "";
+
+                if (data.group_name === 'jobs' &&
+                    'type' in data &&
+                     data.type === 'workflow_approval'
+                ) {
+                    $rootScope.$broadcast('ws-approval');
+                }
+
+                if(!window.liveUpdates && data.group_name !== "control" && $state.current.name !== "output"){
+                    $log.debug('Message from server dropped: ' + e.data);
+                    needsRefreshAfterBlur = true;
+                    return;
+                }
+
                 if(data.group_name==="jobs" && !('status' in data)){
                     // we know that this must have been a
                     // summary complete message b/c status is missing.
@@ -90,19 +125,32 @@ export default
                     // ex: 'ws-jobs-<jobId>'
                     str = `ws-${data.group_name}-${data.job}`;
                 }
+                else if(data.group_name==="project_update_events"){
+                    str = `ws-${data.group_name}-${data.project_update}`;
+                }
                 else if(data.group_name==="ad_hoc_command_events"){
-                    // The naming scheme is "ws" then a
-                    // dash (-) and the group_name, then the job ID
-                    // ex: 'ws-jobs-<jobId>'
                     str = `ws-${data.group_name}-${data.ad_hoc_command}`;
                 }
-                else if(data.group_name==="control"){
-                    // As of v. 3.1.0, there is only 1 "control"
-                    // message, which is for expiring the session if the
-                    // session limit is breached.
+                else if(data.group_name==="system_job_events"){
+                    str = `ws-${data.group_name}-${data.system_job}`;
+                }
+                else if(data.group_name==="inventory_update_events"){
+                    str = `ws-${data.group_name}-${data.inventory_update}`;
+                }
+                else if(data.group_name === "control" && data.reason === "limit_reached"){
+                    // If we got a `limit_reached_<user_pk>` message, determine
+                    // if the current session is still valid (it may have been
+                    // invalidated)
+                    // If so, log the user out and show a meaningful error
                     $log.debug(data.reason);
-                    $rootScope.sessionTimer.expireSession('session_limit');
-                    $state.go('signOut');
+                    let url = GetBasePath('me'); 
+                    Rest.get(url)
+                    .catch(function(resp) {
+                        if (resp.status === 401) {
+                            $rootScope.sessionTimer.expireSession('session_limit');
+                            $state.go('signOut');
+                        }
+                    });
                 }
                 else {
                     // The naming scheme is "ws" then a
@@ -116,7 +164,7 @@ export default
                 if(this.socket){
                     this.socket.close();
                     delete this.socket;
-                    console.log("Socket deleted: "+this.socket);
+                    $log.debug("Socket deleted: "+this.socket);
                 }
             },
             subscribe: function(state){
@@ -124,6 +172,8 @@ export default
                 // listen for specific messages. A subscription object could
                 // look like {"groups":{"jobs": ["status_changed", "summary"]}.
                 // This is used by all socket-enabled $states
+                state.data.socket.groups.control = ['limit_reached_' + $rootScope.current_user.id];
+                state.data.socket.xrftoken = $cookies.get('csrftoken');
                 this.emit(JSON.stringify(state.data.socket));
                 this.setLast(state);
             },
@@ -132,6 +182,7 @@ export default
                 // on a socket-enabled page, and sends an empty groups object
                 // to the API: {"groups": {}}.
                 // This is used for all pages that are socket-disabled
+                state.data.socket.xrftoken = $cookies.get('csrftoken');
                 if(this.requiresNewSubscribe(state)){
                     this.emit(JSON.stringify(state.data.socket) || JSON.stringify({"groups": {}}));
                 }
@@ -210,22 +261,24 @@ export default
                 // socket-enabled AND socket-disabled, and whether the $state
                 // requires a subscribe or an unsubscribe
                 var self = this;
-                socketPromise.promise.then(function(){
-                    if(!state.data || !state.data.socket){
-                        _.merge(state.data, {socket: {groups: {}}});
-                        self.unsubscribe(state);
+                return socketPromise.promise.then(function(){
+                    if (_.get(state, 'data.socket.groups.jobs')) {
+                        if (!state.data.socket.groups.jobs.includes("status_changed")) {
+                            state.data.socket.groups.jobs.push("status_changed");
+                        }
                     }
-                    else{
-                        ["job_events", "ad_hoc_command_events", "workflow_events",
+                    else if(!state.data || !state.data.socket){
+                        _.merge(state.data, {socket: {groups: {jobs: ["status_changed"]}}});
+                    }
+                    ["job_events", "ad_hoc_command_events", "workflow_events",
                          "project_update_events", "inventory_update_events",
                          "system_job_events"
-                        ].forEach(function(group) {
-                            if(state.data && state.data.socket && state.data.socket.groups.hasOwnProperty(group)){
-                                state.data.socket.groups[group] = [id];
-                            }
-                        });
-                        self.subscribe(state);
-                    }
+                    ].forEach(function(group) {
+                        if(state.data && state.data.socket && state.data.socket.groups.hasOwnProperty(group)){
+                            state.data.socket.groups[group] = [id];
+                        }
+                    });
+                    self.subscribe(state);
                     return true;
                 });
             }

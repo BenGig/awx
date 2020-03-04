@@ -4,25 +4,7 @@
  * All Rights Reserved
  *************************************************/
 
-export default ['i18n', 'InventoryCompletedJobsList', function(i18n, InventoryCompletedJobsList) {
-
-        var completed_jobs_object = {
-            name: 'completed_jobs',
-            index: false,
-            basePath: "unified_jobs",
-            title: i18n._('Completed Jobs'),
-            iterator: 'completed_job',
-            generateList: true,
-            skipGenerator: true,
-            search: {
-                "or__job__inventory": ''
-            },
-            ngClick: "$state.go('inventories.editSmartInventory.completed_jobs')"
-        };
-
-        let clone = _.clone(InventoryCompletedJobsList);
-        completed_jobs_object = angular.extend(clone, completed_jobs_object);
-
+export default ['i18n', function(i18n) {
         return {
 
             addTitle: i18n._('NEW SMART INVENTORY'),
@@ -131,8 +113,8 @@ export default ['i18n', 'InventoryCompletedJobsList', function(i18n, InventoryCo
                             label: i18n._('Add'),
                             ngClick: "$state.go('.add')",
                             awToolTip: i18n._('Add a permission'),
-                            actionClass: 'btn List-buttonSubmit',
-                            buttonContent: '&#43; ADD',
+                            actionClass: 'at-Button--add',
+                            actionId: 'button-add',
                             ngShow: '(inventory_obj.summary_fields.user_capabilities.edit || canAdd)'
 
                         }
@@ -142,19 +124,19 @@ export default ['i18n', 'InventoryCompletedJobsList', function(i18n, InventoryCo
                             key: true,
                             label: i18n._('User'),
                             linkBase: 'users',
-                            class: 'col-lg-3 col-md-3 col-sm-3 col-xs-4'
+                            columnClass: 'col-sm-3 col-xs-4'
                         },
                         role: {
                             label: i18n._('Role'),
                             type: 'role',
                             nosort: true,
-                            class: 'col-lg-4 col-md-4 col-sm-4 col-xs-4',
+                            columnClass: 'col-sm-4 col-xs-4'
                         },
                         team_roles: {
                             label: i18n._('Team Roles'),
                             type: 'team_roles',
                             nosort: true,
-                            class: 'col-lg-5 col-md-5 col-sm-5 col-xs-4',
+                            columnClass: 'col-sm-5 col-xs-4'
                         }
                     },
                     ngClick: "$state.go('inventories.editSmartInventory.permissions');"
@@ -169,7 +151,11 @@ export default ['i18n', 'InventoryCompletedJobsList', function(i18n, InventoryCo
                     ngClick: "$state.go('inventories.editSmartInventory.hosts');",
                     skipGenerator: true
                 },
-                completed_jobs: completed_jobs_object
+                completed_jobs: {
+                    title: i18n._('Completed Jobs'),
+                    skipGenerator: true,
+                    ngClick: "$state.go('inventories.editSmartInventory.completed_jobs')"
+                }
             }
 
         };

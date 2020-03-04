@@ -11,9 +11,10 @@
  */
 
 function InventoriesList($scope,
-    $filter, Rest, InventoryList, Prompt,
+    $filter, qs, InventoryList, Prompt,
     ProcessErrors, GetBasePath, Wait, $state,
-    Dataset, canAdd, i18n, Inventory, InventoryHostsStrings) {
+    Dataset, canAdd, i18n, Inventory, InventoryHostsStrings,
+    ngToast) {
 
     let inventory = new Inventory();
 
@@ -37,9 +38,10 @@ function InventoriesList($scope,
 
     function processInventoryRow(inventory) {
         inventory.launch_class = "";
-        inventory.host_status_class = "Inventories-hostStatus";
 
         if (inventory.has_inventory_sources) {
+            inventory.copyTip = i18n._('Inventories with sources cannot be copied');
+            inventory.copyClass = "btn-disabled";
             if (inventory.inventory_sources_with_failures > 0) {
                 inventory.syncStatus = 'error';
                 inventory.syncTip = inventory.inventory_sources_with_failures + i18n._(' sources with sync failures. Click for details');
@@ -50,6 +52,8 @@ function InventoriesList($scope,
             }
         }
         else {
+            inventory.copyTip = i18n._('Copy Inventory');
+            inventory.copyClass = "";
             inventory.syncStatus = 'na';
             inventory.syncTip = i18n._('Not configured for inventory sync.');
             inventory.launch_class = "btn-disabled";
@@ -74,23 +78,41 @@ function InventoriesList($scope,
     }
 
     $scope.copyInventory = inventory => {
-        Wait('start');
-        new Inventory('get', inventory.id)
-            .then(model => model.copy())
-            .then(copy => $scope.editInventory(copy))
-            .catch(({ data, status }) => {
-                const params = { hdr: 'Error!', msg: `Call to copy failed. Return status: ${status}` };
-                ProcessErrors($scope, data, status, null, params);
-            })
-            .finally(() => Wait('stop'));
+        if (!inventory.has_inventory_sources) {
+            Wait('start');
+            new Inventory('get', inventory.id)
+                .then(model => model.copy())
+                .then(copiedInv => {
+                    ngToast.success({
+                        content: `
+                            <div class="Toast-wrapper">
+                                <div class="Toast-icon">
+                                    <i class="fa fa-check-circle Toast-successIcon"></i>
+                                </div>
+                                <div>
+                                    ${InventoryHostsStrings.get('SUCCESSFUL_CREATION', copiedInv.name)}
+                                </div>
+                            </div>`,
+                        dismissButton: false,
+                        dismissOnTimeout: true
+                    });
+                    $state.go('.', null, { reload: true });
+                })
+                .catch(({ data, status }) => {
+                    const params = { hdr: 'Error!', msg: `Call to copy failed. Return status: ${status}` };
+                    ProcessErrors($scope, data, status, null, params);
+                })
+                .finally(() => Wait('stop'));
+        }
     };
 
-    $scope.editInventory = function (inventory) {
+    $scope.editInventory = function (inventory, reload) {
+        const goOptions = reload ? { reload: true } : null;
         if(inventory.kind && inventory.kind === 'smart') {
-            $state.go('inventories.editSmartInventory', {smartinventory_id: inventory.id});
+            $state.go('inventories.editSmartInventory', {smartinventory_id: inventory.id}, goOptions);
         }
         else {
-            $state.go('inventories.edit', {inventory_id: inventory.id});
+            $state.go('inventories.edit', {inventory_id: inventory.id}, goOptions);
         }
     };
 
@@ -135,7 +157,7 @@ function InventoriesList($scope,
                     resourceName: $filter('sanitize')(name),
                     body: deleteModalBody,
                     action: action,
-                    actionText: 'DELETE'
+                    actionText: i18n._('DELETE')
                 });
             });
     };
@@ -146,25 +168,32 @@ function InventoriesList($scope,
             inventory.pending_deletion = true;
         }
         if (data.status === 'deleted') {
-            let reloadListStateParams = null;
+            let reloadListStateParams = _.cloneDeep($state.params);
 
-            if($scope.inventories.length === 1 && $state.params.inventory_search && !_.isEmpty($state.params.inventory_search.page) && $state.params.inventory_search.page !== '1') {
-                reloadListStateParams = _.cloneDeep($state.params);
+            if($scope.inventories.length === 1 && $state.params.inventory_search && _.hasIn($state, 'params.inventory_search.page') && $state.params.inventory_search.page !== '1') {
                 reloadListStateParams.inventory_search.page = (parseInt(reloadListStateParams.inventory_search.page)-1).toString();
             }
 
-            if (parseInt($state.params.inventory_id) === data.inventory_id) {
-                $state.go("^", reloadListStateParams, {reload: true});
+            if (parseInt($state.params.inventory_id) === data.inventory_id || parseInt($state.params.smartinventory_id) === data.inventory_id) {
+                $state.go("inventories", reloadListStateParams, {reload: true});
             } else {
-                $state.go('.', reloadListStateParams, {reload: true});
+                Wait('start');
+                $state.go('.', reloadListStateParams);
+                const path = GetBasePath($scope.list.basePath) || GetBasePath($scope.list.name);
+                qs.search(path, reloadListStateParams.inventory_search)
+                    .then((searchResponse) => {
+                        $scope.inventories_dataset = searchResponse.data;
+                        $scope.inventories = searchResponse.data.results;
+                    })
+                    .finally(() => Wait('stop'));
             }
         }
     });
 }
 
 export default ['$scope',
-    '$filter', 'Rest', 'InventoryList', 'Prompt',
+    '$filter', 'QuerySet', 'InventoryList', 'Prompt',
     'ProcessErrors', 'GetBasePath', 'Wait',
     '$state', 'Dataset', 'canAdd', 'i18n', 'InventoryModel',
-    'InventoryHostsStrings', InventoriesList
+    'InventoryHostsStrings', 'ngToast', InventoriesList
 ];

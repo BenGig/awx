@@ -5,8 +5,10 @@ exports.command = function navigateTo (url, expectSpinny = true) {
     this.url(url);
 
     if (expectSpinny) {
-        this.waitForElementVisible(spinny);
-        this.waitForElementNotVisible(spinny);
+        this.waitForElementVisible(spinny, () => {
+            // If a process is running, give spinny a little more time before timing out.
+            this.waitForElementNotVisible(spinny, 30000);
+        });
     }
 
     return this;

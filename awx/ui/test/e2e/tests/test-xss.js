@@ -73,17 +73,17 @@ module.exports = {
                 urls.jobsSchedules = `${pages.jobs.url()}/schedules`;
                 urls.inventoryHosts = `${pages.inventories.url()}/inventory/${data.host.summary_fields.inventory.id}/hosts`;
 
-                client.useCss();
-                client.login();
-                client.resizeWindow(1200, 800);
-                client.waitForAngular();
+                client
+                    .useCss()
+                    .login()
+                    .waitForAngular()
+                    .resizeWindow(1200, 800);
 
                 done();
             });
     },
     'check template form for unsanitized content': client => {
         const multiCredentialOpen = 'multi-credential button i[class*="search"]';
-        const multiCredentialExit = 'multi-credential-modal button[class*="exit"]';
 
         client.navigateTo(urls.jobTemplate, false);
 
@@ -101,10 +101,14 @@ module.exports = {
         client.expect.element('#xss').not.present;
         client.expect.element('[class=xss]').not.present;
 
-        client.click(multiCredentialExit);
+        client.pause(500);
 
-        client.pause(500).expect.element('div.spinny').not.visible;
-        client.expect.element('#multi-credential-modal').not.present;
+        client.waitForElementVisible('#multi-credential-modal .Form-exit');
+        client.waitForElementNotVisible('.overlay');
+
+        client.click('#multi-credential-modal .Form-exit');
+
+        client.waitForElementNotPresent('#multi-credential-modal');
     },
     'check template list for unsanitized content': client => {
         const itemRow = `#row-${data.jobTemplate.id}`;
@@ -147,6 +151,9 @@ module.exports = {
         client.expect.element('[class=xss]').not.present;
 
         client.click('#prompt_cancel_btn');
+        if (client.isVisible('#prompt_cancel_btn')) {
+            client.click('#prompt_cancel_btn');
+        }
 
         client.expect.element('#prompt-header').not.visible;
     },
@@ -160,15 +167,13 @@ module.exports = {
     },
     'check user roles list for unsanitized content': client => {
         const adminRole = data.project.summary_fields.object_roles.admin_role;
-        const itemDelete = `#permissions_table tr[id="${adminRole.id}"] #delete-action`;
+        const itemDelete = `#permissions_table .List-tableRow[id="${adminRole.id}"] #delete-action`;
 
         client.expect.element('#permissions_tab').visible;
         client.expect.element('#permissions_tab').enabled;
 
-        client.click('#permissions_tab');
-
-        client.expect.element('div.spinny').visible;
-        client.expect.element('div.spinny').not.visible;
+        client.pause(2000);
+        client.findThenClick('#permissions_tab', 'css');
 
         client.expect.element('#xss').not.present;
         client.expect.element('[class=xss]').not.present;
@@ -225,14 +230,17 @@ module.exports = {
         client.expect.element('[class=xss]').not.present;
     },
     'check notification list for unsanitized content': client => {
-        const itemRow = `#notification_templates_table tr[id="${data.notification.id}"]`;
-        const itemName = `${itemRow} td[class*="name-"] a`;
+        const itemRow = `#notification_templates_table .List-tableRow[id="${data.notification.id}"]`;
+        const itemName = `${itemRow} .List-tableCell[class*="name-"] a`;
 
-        client.expect.element('div[class^="Panel"] smart-search').visible;
-        client.expect.element('div[class^="Panel"] smart-search input').enabled;
+        client.expect.element('div.at-Panel smart-search').visible;
+        client.expect.element('div.at-Panel smart-search input').enabled;
 
-        client.sendKeys('div[class^="Panel"] smart-search input', `id:>${data.notification.id - 1} id:<${data.notification.id + 1}`);
-        client.sendKeys('div[class^="Panel"] smart-search input', client.Keys.ENTER);
+        client.sendKeys('div.at-Panel smart-search input', `id:>${data.notification.id - 1} id:<${data.notification.id + 1}`);
+        client.waitForElementNotPresent('div.at-Panel smart-search .SmartSearch-searchButton--disabled');
+        client.waitForElementNotVisible('.overlay');
+        client.pause(2000);
+        client.click('div.at-Panel smart-search .SmartSearch-searchButton');
 
         client.expect.element('div.spinny').visible;
         client.expect.element('div.spinny').not.visible;
@@ -265,6 +273,9 @@ module.exports = {
         client.expect.element('[class=xss]').not.present;
 
         client.click('#prompt_cancel_btn');
+        if (client.isVisible('#prompt_cancel_btn')) {
+            client.click('#prompt_cancel_btn');
+        }
 
         client.expect.element('#prompt-header').not.visible;
     },
@@ -279,11 +290,13 @@ module.exports = {
     'check organization list for unsanitized content': client => {
         const itemName = '#OrgCards h3[class*="-label"]';
 
-        client.expect.element('div[class^="Panel"] smart-search').visible;
-        client.expect.element('div[class^="Panel"] smart-search input').enabled;
+        client.expect.element('div.at-Panel smart-search').visible;
+        client.expect.element('div.at-Panel smart-search input').enabled;
 
-        client.sendKeys('div[class^="Panel"] smart-search input', `id:>${data.organization.id - 1} id:<${data.organization.id + 1}`);
-        client.sendKeys('div[class^="Panel"] smart-search input', client.Keys.ENTER);
+        client.sendKeys('div.at-Panel smart-search input', `id:>${data.organization.id - 1} id:<${data.organization.id + 1}`);
+        client.waitForElementNotPresent('div.at-Panel smart-search .SmartSearch-searchButton--disabled');
+        client.waitForElementNotVisible('.overlay');
+        client.click('div.at-Panel smart-search .SmartSearch-searchButton');
 
         client.expect.element('div.spinny').visible;
         client.expect.element('div.spinny').not.visible;
@@ -315,6 +328,9 @@ module.exports = {
         client.expect.element('[class=xss]').not.present;
 
         client.click('#prompt_cancel_btn');
+        if (client.isVisible('#prompt_cancel_btn')) {
+            client.click('#prompt_cancel_btn');
+        }
 
         client.expect.element('#prompt-header').not.visible;
     },
@@ -327,14 +343,16 @@ module.exports = {
         client.expect.element('[class=xss]').not.present;
     },
     'check inventory list for unsanitized content': client => {
-        const itemRow = `#inventories_table tr[id="${data.inventory.id}"]`;
-        const itemName = `${itemRow} td[class*="name-"] a`;
+        const itemRow = `#inventories_table .List-tableRow[id="${data.inventory.id}"]`;
+        const itemName = `${itemRow} .List-tableCell[class*="name-"] a`;
 
-        client.expect.element('div[class^="Panel"] smart-search').visible;
-        client.expect.element('div[class^="Panel"] smart-search input').enabled;
+        client.expect.element('div.at-Panel smart-search').visible;
+        client.expect.element('div.at-Panel smart-search input').enabled;
 
-        client.sendKeys('div[class^="Panel"] smart-search input', `id:>${data.inventory.id - 1} id:<${data.inventory.id + 1}`);
-        client.sendKeys('div[class^="Panel"] smart-search input', client.Keys.ENTER);
+        client.sendKeys('div.at-Panel smart-search input', `id:>${data.inventory.id - 1} id:<${data.inventory.id + 1}`);
+        client.waitForElementNotPresent('div.at-Panel smart-search .SmartSearch-searchButton--disabled');
+        client.waitForElementNotVisible('.overlay');
+        client.click('div.at-Panel smart-search .SmartSearch-searchButton');
 
         client.expect.element('div.spinny').visible;
         client.expect.element('div.spinny').not.visible;
@@ -367,6 +385,9 @@ module.exports = {
         client.expect.element('[class=xss]').not.present;
 
         client.click('#prompt_cancel_btn');
+        if (client.isVisible('#prompt_cancel_btn')) {
+            client.click('#prompt_cancel_btn');
+        }
 
         client.expect.element('#prompt-header').not.visible;
     },
@@ -387,14 +408,16 @@ module.exports = {
         client.expect.element('[class=xss]').not.present;
     },
     'check inventory script list for unsanitized content': client => {
-        const itemRow = `#inventory_scripts_table tr[id="${data.inventoryScript.id}"]`;
-        const itemName = `${itemRow} td[class*="name-"] a`;
+        const itemRow = `#inventory_scripts_table .List-tableRow[id="${data.inventoryScript.id}"]`;
+        const itemName = `${itemRow} .List-tableCell[class*="name-"] a`;
 
-        client.expect.element('div[class^="Panel"] smart-search').visible;
-        client.expect.element('div[class^="Panel"] smart-search input').enabled;
+        client.expect.element('div.at-Panel smart-search').visible;
+        client.expect.element('div.at-Panel smart-search input').enabled;
 
-        client.sendKeys('div[class^="Panel"] smart-search input', `id:>${data.inventoryScript.id - 1} id:<${data.inventoryScript.id + 1}`);
-        client.sendKeys('div[class^="Panel"] smart-search input', client.Keys.ENTER);
+        client.sendKeys('div.at-Panel smart-search input', `id:>${data.inventoryScript.id - 1} id:<${data.inventoryScript.id + 1}`);
+        client.waitForElementNotPresent('div.at-Panel smart-search .SmartSearch-searchButton--disabled');
+        client.waitForElementNotVisible('.overlay');
+        client.click('div.at-Panel smart-search .SmartSearch-searchButton');
 
         client.expect.element('div.spinny').visible;
         client.expect.element('div.spinny').not.visible;
@@ -427,6 +450,9 @@ module.exports = {
         client.expect.element('[class=xss]').not.present;
 
         client.click('#prompt_cancel_btn');
+        if (client.isVisible('#prompt_cancel_btn')) {
+            client.click('#prompt_cancel_btn');
+        }
 
         client.expect.element('#prompt-header').not.visible;
     },
@@ -439,11 +465,13 @@ module.exports = {
         client.expect.element('[class=xss]').not.present;
     },
     'check project roles list for unsanitized content': client => {
-        const itemDelete = `#permissions_table tr[id="${data.user.id}"] div[class*="RoleList-deleteContainer"]`;
+        const itemDelete = `#permissions_table .List-tableRow[id="${data.user.id}"] div[class*="RoleList-deleteContainer"]`;
 
         client.expect.element('#permissions_tab').visible;
         client.expect.element('#permissions_tab').enabled;
 
+        client.pause(1000);
+        client.click('#permissions_tab');
         client.click('#permissions_tab');
 
         client.expect.element('div.spinny').visible;
@@ -456,7 +484,9 @@ module.exports = {
         client.expect.element('div[ui-view="related"] smart-search input').enabled;
 
         client.sendKeys('div[ui-view="related"] smart-search input', `id:>${data.user.id - 1} id:<${data.user.id + 1}`);
-        client.sendKeys('div[ui-view="related"] smart-search input', client.Keys.ENTER);
+        client.waitForElementNotPresent('div[ui-view="related"] smart-search .SmartSearch-searchButton--disabled');
+        client.waitForElementNotVisible('.overlay');
+        client.click('div[ui-view="related"] smart-search .SmartSearch-searchButton');
 
         client.expect.element('div.spinny').not.visible;
 
@@ -508,36 +538,38 @@ module.exports = {
         client.expect.element('#project_form').visible;
     },
     'check project list for unsanitized content': client => {
-        const itemRow = `#projects_table tr[id="${data.project.id}"]`;
-        const itemName = `${itemRow} td[class*="name-"] a`;
+        const itemRow = `#row-${data.project.id}`;
+        const itemName = `${itemRow} .at-RowItem-header`;
 
-        client.expect.element('div[class^="Panel"] smart-search').visible;
-        client.expect.element('div[class^="Panel"] smart-search input').enabled;
+        client.expect.element('.at-Panel smart-search').visible;
+        client.expect.element('.at-Panel smart-search input').enabled;
 
-        client.sendKeys('div[class^="Panel"] smart-search input', `id:>${data.project.id - 1} id:<${data.project.id + 1}`);
-        client.sendKeys('div[class^="Panel"] smart-search input', client.Keys.ENTER);
+        client.sendKeys('.at-Panel smart-search input', `id:>${data.project.id - 1} id:<${data.project.id + 1}`);
+        client.waitForElementNotPresent('div.at-Panel smart-search .SmartSearch-searchButton--disabled');
+        client.waitForElementNotVisible('.overlay');
+        client.click('div.at-Panel smart-search .SmartSearch-searchButton');
 
-        client.expect.element('div.spinny').visible;
         client.expect.element('div.spinny').not.visible;
 
-        client.expect.element('.List-titleBadge').text.equal('1');
+        client.expect.element('.at-Panel-headingTitleBadge').text.equal('1');
         client.expect.element(itemName).visible;
 
-        client.moveToElement(itemName, 0, 0, () => {
-            client.expect.element(itemName).attribute('aria-describedby');
-
-            client.getAttribute(itemName, 'aria-describedby', ({ value }) => {
-                const tooltip = `#${value}`;
-
-                client.expect.element(tooltip).present;
-                client.expect.element(tooltip).visible;
-
-                client.expect.element('#xss').not.present;
-                client.expect.element('[class=xss]').not.present;
-                client.expect.element(tooltip).attribute('innerHTML')
-                    .contains('&lt;div id="xss" class="xss"&gt;test&lt;/div&gt;');
-            });
-        });
+        // TODO: uncomment when tooltips are added
+        // client.moveToElement(itemName, 0, 0, () => {
+        //     client.expect.element(itemName).attribute('aria-describedby');
+        //
+        //     client.getAttribute(itemName, 'aria-describedby', ({ value }) => {
+        //         const tooltip = `#${value}`;
+        //
+        //         client.expect.element(tooltip).present;
+        //         client.expect.element(tooltip).visible;
+        //
+        //         client.expect.element('#xss').not.present;
+        //         client.expect.element('[class=xss]').not.present;
+        //         client.expect.element(tooltip).attribute('innerHTML')
+        //             .contains('&lt;div id="xss" class="xss"&gt;test&lt;/div&gt;');
+        //     });
+        // });
 
         client.click(`${itemRow} i[class*="trash"]`);
 
@@ -548,6 +580,9 @@ module.exports = {
         client.expect.element('[class=xss]').not.present;
 
         client.click('#prompt_cancel_btn');
+        if (client.isVisible('#prompt_cancel_btn')) {
+            client.click('#prompt_cancel_btn');
+        }
 
         client.expect.element('#prompt-header').not.visible;
     },
@@ -560,14 +595,16 @@ module.exports = {
         client.expect.element('[class=xss]').not.present;
     },
     'check credential list for unsanitized content': client => {
-        const itemRow = `#credentials_table tr[id="${data.credential.id}"]`;
-        const itemName = `${itemRow} td[class*="name-"] a`;
+        const itemRow = `#credentials_table .List-tableRow[id="${data.credential.id}"]`;
+        const itemName = `${itemRow} .List-tableCell[class*="name-"] a`;
 
         client.expect.element('div[ui-view="list"] smart-search').visible;
         client.expect.element('div[ui-view="list"] smart-search input').enabled;
 
         client.sendKeys('div[ui-view="list"] smart-search input', `id:>${data.credential.id - 1} id:<${data.credential.id + 1}`);
-        client.sendKeys('div[ui-view="list"] smart-search input', client.Keys.ENTER);
+        client.waitForElementNotPresent('div[ui-view="list"] smart-search .SmartSearch-searchButton--disabled');
+        client.waitForElementNotVisible('.overlay');
+        client.click('div[ui-view="list"] smart-search .SmartSearch-searchButton');
 
         client.expect.element('div.spinny').visible;
         client.expect.element('div.spinny').not.visible;
@@ -600,6 +637,9 @@ module.exports = {
         client.expect.element('[class=xss]').not.present;
 
         client.click('#prompt_cancel_btn');
+        if (client.isVisible('#prompt_cancel_btn')) {
+            client.click('#prompt_cancel_btn');
+        }
 
         client.expect.element('#prompt-header').not.visible;
     },
@@ -612,14 +652,16 @@ module.exports = {
         client.expect.element('[class=xss]').not.present;
     },
     'check team list for unsanitized content': client => {
-        const itemRow = `#teams_table tr[id="${data.team.id}"]`;
-        const itemName = `${itemRow} td[class*="name-"] a`;
+        const itemRow = `#teams_table .List-tableRow[id="${data.team.id}"]`;
+        const itemName = `${itemRow} .List-tableCell[class*="name-"] a`;
 
-        client.expect.element('div[class^="Panel"] smart-search').visible;
-        client.expect.element('div[class^="Panel"] smart-search input').enabled;
+        client.expect.element('div.at-Panel smart-search').visible;
+        client.expect.element('div.at-Panel smart-search input').enabled;
 
-        client.sendKeys('div[class^="Panel"] smart-search input', `id:>${data.team.id - 1} id:<${data.team.id + 1}`);
-        client.sendKeys('div[class^="Panel"] smart-search input', client.Keys.ENTER);
+        client.sendKeys('div.at-Panel smart-search input', `id:>${data.team.id - 1} id:<${data.team.id + 1}`);
+        client.waitForElementNotPresent('div.at-Panel smart-search .SmartSearch-searchButton--disabled');
+        client.waitForElementNotVisible('.overlay');
+        client.click('div.at-Panel smart-search .SmartSearch-searchButton');
 
         client.expect.element('div.spinny').visible;
         client.expect.element('div.spinny').not.visible;
@@ -652,6 +694,9 @@ module.exports = {
         client.expect.element('[class=xss]').not.present;
 
         client.click('#prompt_cancel_btn');
+        if (client.isVisible('#prompt_cancel_btn')) {
+            client.click('#prompt_cancel_btn');
+        }
 
         client.expect.element('#prompt-header').not.visible;
     },
@@ -666,8 +711,8 @@ module.exports = {
         client.expect.element('[class=xss]').not.present;
     },
     'check job schedules view for unsanitized content': client => {
-        const itemRow = `#schedules_table tr[id="${data.jobTemplateSchedule.id}"]`;
-        const itemName = `${itemRow} td[class*="name-"] a`;
+        const itemRow = `#schedules_table .List-tableRow[id="${data.jobTemplateSchedule.id}"]`;
+        const itemName = `${itemRow} .List-tableCell[class*="name-"] a`;
 
         client.navigateTo(urls.jobsSchedules);
 
@@ -686,22 +731,23 @@ module.exports = {
         });
     },
     'check host recent jobs popup for unsanitized content': client => {
-        const itemRow = `#hosts_table tr[id="${data.host.id}"]`;
-        const itemName = `${itemRow} td[class*="active_failures-"] a`;
-        const popOver = `${itemRow} td[class*="active_failures-"] div[class*="popover"]`;
+        const itemRow = `#hosts_table .List-tableRow[id="${data.host.id}"]`;
+        const itemName = `${itemRow} .List-tableCell[class*="active_failures-"] a`;
 
         client.navigateTo(urls.inventoryHosts);
-        client.expect.element('div[class^="Panel"] smart-search').visible;
-        client.expect.element('div[class^="Panel"] smart-search input').enabled;
+        client.expect.element('div.at-Panel smart-search').visible;
+        client.expect.element('div.at-Panel smart-search input').enabled;
 
-        client.sendKeys('div[class^="Panel"] smart-search input', `id:>${data.host.id - 1} id:<${data.host.id + 1}`);
-        client.sendKeys('div[class^="Panel"] smart-search input', client.Keys.ENTER);
+        client.sendKeys('div[ui-view="form"] smart-search input', `id:>${data.host.id - 1} id:<${data.host.id + 1}`);
+        client.waitForElementNotPresent('div[ui-view="form"] smart-search .SmartSearch-searchButton--disabled');
+        client.waitForElementNotVisible('.overlay');
+        client.click('div[ui-view="form"] smart-search .SmartSearch-searchButton');
 
         client.expect.element('div.spinny').visible;
         client.expect.element('div.spinny').not.visible;
 
         client.click(itemName);
-        client.expect.element(popOver).present;
+        client.expect.element('body > div.popover').present;
 
         client.expect.element('[class=xss]').not.present;
 

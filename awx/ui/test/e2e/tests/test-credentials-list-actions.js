@@ -12,7 +12,6 @@ module.exports = {
         const credentials = client.page.credentials();
 
         client.useCss();
-        client.resizeWindow(1200, 800);
         client.login();
         client.waitForAngular();
 
@@ -30,11 +29,29 @@ module.exports = {
         credentials.waitForElementVisible('div.spinny');
         credentials.waitForElementNotVisible('div.spinny');
 
-        credentials.expect.element(`#credentials_table tr[id="${data.credential.id}"]`).visible;
+        credentials.expect.element(`#credentials_table .List-tableRow[id="${data.credential.id}"]`).visible;
         credentials.expect.element('i[class*="copy"]').visible;
         credentials.expect.element('i[class*="copy"]').enabled;
 
         credentials.click('i[class*="copy"]');
+        credentials.waitForElementVisible('div.spinny');
+        credentials.waitForElementNotVisible('div.spinny');
+
+        const activityStream = 'bread-crumb > div i[class$="icon-activity-stream"]';
+        const activityRow = '#activities_table .List-tableCell[class*="description-column"] a';
+        const toast = 'div[class="Toast-icon"]';
+
+        credentials.waitForElementNotPresent(toast);
+        credentials.expect.element(activityStream).visible;
+        credentials.expect.element(activityStream).enabled;
+        credentials.click(activityStream);
+        credentials.waitForElementVisible('div.spinny');
+        credentials.waitForElementNotVisible('div.spinny');
+
+        client
+            .waitForElementVisible(activityRow)
+            .click(activityRow);
+
         credentials.waitForElementVisible('div.spinny');
         credentials.waitForElementNotVisible('div.spinny');
 

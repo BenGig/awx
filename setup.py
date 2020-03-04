@@ -6,9 +6,7 @@
 import os
 import glob
 import sys
-import subprocess
 from setuptools import setup
-from distutils.command.sdist import sdist
 
 
 # Paths we'll use later
@@ -22,12 +20,8 @@ docdir = "/usr/share/doc/awx"
 def get_version():
     current_dir = os.path.dirname(os.path.abspath(__file__))
     version_file = os.path.join(current_dir, 'VERSION')
-    if os.path.isfile(version_file):
-        with open(version_file, 'r') as file:
-            version = file.read().strip()
-    else:
-        version = subprocess.Popen("git describe --long | cut -d - -f 1-1", shell=True, stdout=subprocess.PIPE).stdout.read().strip()
-    return version
+    with open(version_file, 'r') as file:
+        return file.read().strip()
 
 
 if os.path.exists("/etc/debian_version"):
@@ -44,38 +38,6 @@ else:
     siteconfig = "/etc/nginx/sites-enabled"
     # The .spec will create symlinks to support multiple versions of sosreport
     sosconfig = "/usr/share/sosreport/sos/plugins"
-
-#####################################################################
-# Isolated packaging
-#####################################################################
-
-
-class sdist_isolated(sdist):
-    includes = [
-        'include VERSION',
-        'include Makefile',
-        'include awx/__init__.py',
-        'include awx/main/expect/run.py',
-        'include tools/scripts/awx-expect',
-        'include requirements/requirements_isolated.txt',
-        'recursive-include awx/lib *.py',
-    ]
-
-    def __init__(self, dist):
-        sdist.__init__(self, dist)
-        dist.metadata.version = get_version()
-
-    def get_file_list(self):
-        self.filelist.process_template_line('include setup.py')
-        for line in self.includes:
-            self.filelist.process_template_line(line)
-        self.write_manifest()
-
-    def make_release_tree(self, base_dir, files):
-        sdist.make_release_tree(self, base_dir, files)
-        with open(os.path.join(base_dir, 'MANIFEST.in'), 'w') as f:
-            f.write('\n'.join(self.includes))
-
 
 #####################################################################
 # Helper Functions
@@ -152,6 +114,13 @@ setup(
         'console_scripts': [
             'awx-manage = awx:manage',
         ],
+        'awx.credential_plugins': [
+            'conjur = awx.main.credential_plugins.conjur:conjur_plugin',
+            'hashivault_kv = awx.main.credential_plugins.hashivault:hashivault_kv_plugin',
+            'hashivault_ssh = awx.main.credential_plugins.hashivault:hashivault_ssh_plugin',
+            'azure_kv = awx.main.credential_plugins.azure_kv:azure_keyvault_plugin',
+            'aim = awx.main.credential_plugins.aim:aim_plugin'
+        ]
     },
     data_files = proc_data_files([
         ("%s" % homedir,        ["config/wsgi.py",
@@ -165,12 +134,10 @@ setup(
                          "tools/scripts/awx-python",
                          "tools/scripts/ansible-tower-setup"]),
         ("%s" % sosconfig, ["tools/sosreport/tower.py"])]),
-    cmdclass = {'sdist_isolated': sdist_isolated},
     options = {
         'aliases': {
             'dev_build': 'clean --all egg_info sdist',
-            'release_build': 'clean --all egg_info -b "" sdist',
-            'isolated_build': 'clean --all egg_info -b "" sdist_isolated',
+            'release_build': 'clean --all egg_info -b "" sdist'
         },
         'build_scripts': {
             'executable': '/usr/bin/awx-python',

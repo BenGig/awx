@@ -9,6 +9,7 @@ import socket
 import copy
 import sys
 import traceback
+import uuid
 
 # Centos-7 doesn't include the svg mime type
 # /usr/lib64/python/mimetypes.py
@@ -18,7 +19,16 @@ import mimetypes
 from split_settings.tools import optional, include
 
 # Load default settings.
-from defaults import *  # NOQA
+from .defaults import *  # NOQA
+
+# don't use memcache when running tests
+if "pytest" in sys.modules:
+    CACHES = {
+        'default': {
+            'BACKEND': 'django.core.cache.backends.locmem.LocMemCache',
+            'LOCATION': 'unique-{}'.format(str(uuid.uuid4())),
+        },
+    }
 
 # awx-manage shell_plus --notebook
 NOTEBOOK_ARGUMENTS = [
@@ -34,11 +44,16 @@ SHELL_PLUS_PRINT_SQL = False
 
 # show colored logs in the dev environment
 # to disable this, set `COLOR_LOGS = False` in awx/settings/local_settings.py
-LOGGING['handlers']['console']['()'] = 'awx.main.utils.handlers.ColorHandler'
+LOGGING['handlers']['console']['()'] = 'awx.main.utils.handlers.ColorHandler'  # noqa
+# task system does not propagate to AWX, so color log these too
+LOGGING['handlers']['task_system'] = LOGGING['handlers']['console'].copy()  # noqa
 COLOR_LOGS = True
 
 # Pipe management playbook output to console
-LOGGING['loggers']['awx.isolated.manager.playbooks']['propagate'] = True
+LOGGING['loggers']['awx.isolated.manager.playbooks']['propagate'] = True  # noqa
+
+# celery is annoyingly loud when docker containers start
+LOGGING['loggers'].pop('celery', None)  # noqa
 
 ALLOWED_HOSTS = ['*']
 
@@ -58,14 +73,12 @@ template['OPTIONS']['loaders'] = (
     'django.template.loaders.app_directories.Loader',
 )
 
-# Disable capturing all SQL queries when running celeryd in development.
-if 'celery' in sys.argv:
-    SQL_DEBUG = False
-
-CELERYD_HIJACK_ROOT_LOGGER = False
-CELERYD_LOG_COLOR = True
-
 CALLBACK_QUEUE = "callback_tasks"
+
+# Enable dynamically pulling roles from a requirement.yml file
+# when updating SCM projects
+# Note: This setting may be overridden by database settings.
+AWX_ROLES_ENABLED = True
 
 # Enable PROOT for tower-qa integration tests.
 # Note: This setting may be overridden by database settings.
@@ -73,16 +86,17 @@ AWX_PROOT_ENABLED = True
 
 AWX_ISOLATED_USERNAME = 'root'
 AWX_ISOLATED_CHECK_INTERVAL = 1
-AWX_ISOLATED_LAUNCH_TIMEOUT = 30
+AWX_ISOLATED_PERIODIC_CHECK = 30
 
 # Disable Pendo on the UI for development/test.
 # Note: This setting may be overridden by database settings.
 PENDO_TRACKING_STATE = "off"
+INSIGHTS_TRACKING_STATE = False
 
 # Use Django-Jenkins if installed. Only run tests for awx.main app.
 try:
     import django_jenkins
-    INSTALLED_APPS += (django_jenkins.__name__,)
+    INSTALLED_APPS += [django_jenkins.__name__,] # noqa
     PROJECT_APPS = ('awx.main.tests', 'awx.api.tests',)
 except ImportError:
     pass
@@ -101,17 +115,25 @@ if 'django_jenkins' in INSTALLED_APPS:
     PEP8_RCFILE = "setup.cfg"
     PYLINT_RCFILE = ".pylintrc"
 
-INSTALLED_APPS += ('rest_framework_swagger',)
 
-# Much faster than the default
-# https://docs.djangoproject.com/en/1.6/topics/auth/passwords/#how-django-stores-passwords
-PASSWORD_HASHERS = (
-    'django.contrib.auth.hashers.MD5PasswordHasher',
-    'django.contrib.auth.hashers.PBKDF2PasswordHasher',
-)
+# debug toolbar and swagger assume that requirements/requirements_dev.txt are installed
+
+INSTALLED_APPS += [   # NOQA
+    'rest_framework_swagger',
+    'debug_toolbar',
+]
+
+MIDDLEWARE = [
+    'debug_toolbar.middleware.DebugToolbarMiddleware',
+] + MIDDLEWARE  # NOQA
+
+DEBUG_TOOLBAR_CONFIG = {
+    'ENABLE_STACKTRACES' : True,
+}
 
 # Configure a default UUID for development only.
 SYSTEM_UUID = '00000000-0000-0000-0000-000000000000'
+INSTALL_UUID = '00000000-0000-0000-0000-000000000000'
 
 # Store a snapshot of default settings at this point before loading any
 # customizable config files.
@@ -139,21 +161,22 @@ except ImportError:
     traceback.print_exc()
     sys.exit(1)
 
+
+CELERYBEAT_SCHEDULE.update({  # noqa
+    'isolated_heartbeat': {
+        'task': 'awx.main.tasks.awx_isolated_heartbeat',
+        'schedule': timedelta(seconds=AWX_ISOLATED_PERIODIC_CHECK),  # noqa
+        'options': {'expires': AWX_ISOLATED_PERIODIC_CHECK * 2},  # noqa
+    }
+})
+
 CLUSTER_HOST_ID = socket.gethostname()
 
-# Supervisor service name dictionary used for programatic restart
-SERVICE_NAME_DICT = {
-    "celery": "celery",
-    "callback": "receiver",
-    "runworker": "channels",
-    "uwsgi": "uwsgi",
-    "daphne": "daphne",
-    "nginx": "nginx"}
-# Used for sending commands in automatic restart
-UWSGI_FIFO_LOCATION = '/awxfifo'
 
-try:
-    socket.gethostbyname('docker.for.mac.internal')
-    os.environ['SDB_NOTIFY_HOST'] = 'docker.for.mac.internal'
-except Exception:
+if 'Docker Desktop' in os.getenv('OS', ''):
+    os.environ['SDB_NOTIFY_HOST'] = 'docker.for.mac.host.internal'
+else:
     os.environ['SDB_NOTIFY_HOST'] = os.popen('ip route').read().split(' ')[2]
+
+WEBSOCKET_ORIGIN_WHITELIST = ['https://localhost:8043', 'https://localhost:3000']
+AWX_CALLBACK_PROFILE = True

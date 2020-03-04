@@ -20,21 +20,22 @@ export default ['i18n', function(i18n) {
             stateTree: 'users',
             forceListeners: true,
             tabs: true,
-
+            messageBar: {
+                ngShow: 'isOrgAdmin && !canEdit',
+                message: i18n._("Contact your System Administrator to grant you the appropriate permissions to add and edit Users and Teams.")
+            },
             fields: {
                 first_name: {
                     label: i18n._('First Name'),
                     type: 'text',
                     ngDisabled: '!(user_obj.summary_fields.user_capabilities.edit || canAdd)',
-                    required: true,
-                    capitalize: true
+                    required: false,
                 },
                 last_name: {
                     label: i18n._('Last Name'),
                     type: 'text',
                     ngDisabled: '!(user_obj.summary_fields.user_capabilities.edit || canAdd)',
-                    required: true,
-                    capitalize: true
+                    required: false,
                 },
                 organization: {
                     label: i18n._('Organization'),
@@ -73,7 +74,7 @@ export default ['i18n', function(i18n) {
                         reqExpression: "isAddForm",
                         init: false
                     },
-                    ngChange: "clearPWConfirm('password_confirm')",
+                    ngChange: "clearPWConfirm()",
                     autocomplete: false,
                     ngDisabled: '!(user_obj.summary_fields.user_capabilities.edit || canAdd)'
                 },
@@ -139,10 +140,12 @@ export default ['i18n', function(i18n) {
                     fields: {
                         name: {
                             key: true,
-                            label: i18n._('Name')
+                            label: i18n._('Name'),
+                            columnClass: "col-sm-6"
                         },
                         description: {
-                            label: i18n._('Description')
+                            label: i18n._('Description'),
+                            columnClass: "col-sm-6"
                         }
                     },
                     //hideOnSuperuser: true // RBAC defunct
@@ -165,10 +168,12 @@ export default ['i18n', function(i18n) {
                     fields: {
                         name: {
                             key: true,
-                            label: i18n._('Name')
+                            label: i18n._('Name'),
+                            columnClass: "col-sm-6"
                         },
                         description: {
-                            label: i18n._('Description')
+                            label: i18n._('Description'),
+                            columnClass: "col-sm-6"
                         }
                     },
                     //hideOnSuperuser: true // RBAC defunct
@@ -194,35 +199,39 @@ export default ['i18n', function(i18n) {
                             label: i18n._('Name'),
                             ngBind: 'permission.summary_fields.resource_name',
                             ngClick: "redirectToResource(permission)",
-                            nosort: true
+                            nosort: true,
+                            columnClass: "col-sm-4"
                         },
                         type: {
                             label: i18n._('Type'),
                             ngBind: 'permission.summary_fields.resource_type_display_name',
-                            nosort: true
+                            nosort: true,
+                            columnClass: "col-sm-3"
                         },
                         role: {
                             label: i18n._('Role'),
                             ngBind: 'permission.name',
-                            nosort: true
+                            nosort: true,
+                            columnClass: "col-sm-3"
                         },
                     },
                     actions: {
                         add: {
                             ngClick: "$state.go('.add')",
-                            label: 'Add',
+                            label: i18n._('Add'),
                             awToolTip: i18n._('Grant Permission'),
-                            actionClass: 'btn List-buttonSubmit',
-                            buttonContent: '&#43; ' + i18n._('ADD PERMISSIONS'),
+                            actionClass: 'at-Button--add',
+                            actionId: 'button-add',
                             ngShow: '(!is_superuser && (user_obj.summary_fields.user_capabilities.edit || canAdd))'
                         }
                     },
                     fieldActions: {
+                        columnClass: 'col-sm-2',
                         "delete": {
                             label: i18n._('Remove'),
                             ngClick: 'deletePermissionFromUser(user_id, username, permission.name, permission.summary_fields.resource_name, permission.related.users)',
                             iconClass: 'fa fa-times',
-                            awToolTip: i18n._('Dissasociate permission from user'),
+                            awToolTip: i18n._('Dissassociate permission from user'),
                             ngShow: 'permission.summary_fields.user_capabilities.unattach'
                         }
                     },

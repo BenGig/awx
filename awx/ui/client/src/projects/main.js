@@ -4,100 +4,150 @@
  * All Rights Reserved
  *************************************************/
 
-import ProjectsList from './list/projects-list.controller';
 import ProjectsAdd from './add/projects-add.controller';
 import ProjectsEdit from './edit/projects-edit.controller';
-import ProjectList from './projects.list';
 import ProjectsForm from './projects.form';
-import { N_ } from '../i18n';
+import ProjectList from './projects.list';
 import GetProjectPath from './factories/get-project-path.factory';
 import GetProjectIcon from './factories/get-project-icon.factory';
 import GetProjectToolTip from './factories/get-project-tool-tip.factory';
-import ProjectsTemplatesRoute from './projects-templates.route';
-import ProjectsStrings from './projects.strings';
+import {
+    projectsSchedulesListRoute,
+    projectsSchedulesAddRoute,
+    projectsSchedulesEditRoute
+} from '../scheduler/schedules.route';
+
+import ProjectsTemplatesRoute from '~features/templates/routes/projectsTemplatesList.route';
+import projectsListRoute from '~features/projects/routes/projectsList.route.js';
+
+
+function ResolveScmCredentialType (GetBasePath, Rest, ProcessErrors) {
+    Rest.setUrl(GetBasePath('credential_types') + '?kind=scm');
+
+    return Rest.get()
+        .then(({ data }) => {
+            return data.results[0].id;
+        })
+        .catch(({ data, status }) => {
+            ProcessErrors(null, data, status, null, {
+                hdr: 'Error!',
+                msg: 'Failed to get credential type data: ' + status
+            });
+        });
+}
+
+function ResolveInsightsCredentialType (GetBasePath, Rest, ProcessErrors) {
+    Rest.setUrl(GetBasePath('credential_types') + '?name=Insights');
+
+    return Rest.get()
+        .then(({ data }) => {
+            return data.results[0].id;
+        })
+        .catch(({ data, status }) => {
+            ProcessErrors(null, data, status, null, {
+                hdr: 'Error!',
+                msg: 'Failed to get credential type data: ' + status
+            });
+        });
+}
+
+ResolveScmCredentialType.$inject = ['GetBasePath', 'Rest', 'ProcessErrors'];
+ResolveInsightsCredentialType.$inject = ['GetBasePath', 'Rest', 'ProcessErrors'];
+
 
 export default
 angular.module('Projects', [])
-    .controller('ProjectsList', ProjectsList)
     .controller('ProjectsAdd', ProjectsAdd)
     .controller('ProjectsEdit', ProjectsEdit)
     .factory('GetProjectPath', GetProjectPath)
     .factory('GetProjectIcon', GetProjectIcon)
     .factory('GetProjectToolTip', GetProjectToolTip)
-    .factory('ProjectList', ProjectList)
     .factory('ProjectsForm', ProjectsForm)
-    .service('ProjectsStrings', ProjectsStrings)
+    .factory('ProjectList', ProjectList)
     .config(['$stateProvider', 'stateDefinitionsProvider', '$stateExtenderProvider',
         function($stateProvider, stateDefinitionsProvider,$stateExtenderProvider) {
             let stateDefinitions = stateDefinitionsProvider.$get();
             let stateExtender = $stateExtenderProvider.$get();
-            var projectResolve = {
-                CredentialTypes: ['Rest', '$stateParams', 'GetBasePath', 'ProcessErrors',
-                    (Rest, $stateParams, GetBasePath, ProcessErrors) => {
-                        var path = GetBasePath('credential_types');
-                        Rest.setUrl(path);
-                        return Rest.get()
-                            .then(function(data) {
-                                return (data.data.results);
-                            }).catch(function(response) {
-                                ProcessErrors(null, response.data, response.status, null, {
-                                    hdr: 'Error!',
-                                    msg: 'Failed to get credential types. GET returned status: ' +
-                                        response.status
-                                });
-                            });
-                    }
-                ],
-                ConfigData: ['ConfigService', 'ProcessErrors', (ConfigService, ProcessErrors) => {
-                    return ConfigService.getConfig()
-                        .then(response => response)
-                        .catch(({data, status}) => {
-                            ProcessErrors(null, data, status, null, {
-                                hdr: 'Error!',
-                                msg: 'Failed to get config. GET returned status: ' +
-                                    'status: ' + status
-                            });
-                        });
-                }]
-            };
+
+            const projectsAddName = 'projects.add';
+            const projectsEditName = 'projects.edit';
 
             function generateStateTree() {
-                let projectTree = stateDefinitions.generateTree({
-                    parent: 'projects', // top-most node in the generated tree (will replace this state definition)
-                    modes: ['add', 'edit'],
-                    list: 'ProjectList',
+                let projectAdd = stateDefinitions.generateTree({
+                    name: projectsAddName,
+                    url: '/add',
+                    modes: ['add'],
                     form: 'ProjectsForm',
                     controllers: {
-                        list: ProjectsList, // DI strings or objects
-                        add: ProjectsAdd,
-                        edit: ProjectsEdit
+                        add: 'ProjectsAdd',
+                    },
+                })
+                .then(res => {
+                    const stateIndex = res.states.findIndex(s => s.name === projectsAddName);
+
+                    res.states[stateIndex].resolve.scmCredentialType = ResolveScmCredentialType;
+                    res.states[stateIndex].resolve.insightsCredentialType = ResolveInsightsCredentialType;
+
+                    return res;
+                });
+
+                let projectEdit = stateDefinitions.generateTree({
+                    name: projectsEditName,
+                    url: '/:project_id',
+                    modes: ['edit'],
+                    form: 'ProjectsForm',
+                    controllers: {
+                        edit: 'ProjectsEdit',
                     },
                     data: {
                         activityStream: true,
                         activityStreamTarget: 'project',
-                        socket: {
-                            "groups": {
-                                "jobs": ["status_changed"]
-                            }
-                        }
+                        activityStreamId: 'project_id'
                     },
-                    ncyBreadcrumb: {
-                        label: N_('PROJECTS')
+                    breadcrumbs: { 
+                        edit: '{{breadcrumb.project_name}}'
                     },
                     resolve: {
-                        add: projectResolve,
-                        edit: projectResolve
+                        edit: {
+                            isNotificationAdmin: ['Rest', 'ProcessErrors', 'GetBasePath', 'i18n',
+                                function(Rest, ProcessErrors, GetBasePath, i18n) {
+                                    Rest.setUrl(`${GetBasePath('organizations')}?role_level=notification_admin_role&page_size=1`);
+                                    return Rest.get()
+                                        .then(({data}) => {
+                                            return data.count > 0;
+                                        })
+                                        .catch(({data, status}) => {
+                                            ProcessErrors(null, data, status, null, {
+                                                hdr: i18n._('Error!'),
+                                                msg: i18n._('Failed to get organizations for which this user is a notification administrator. GET returned ') + status
+                                            });
+                                    });
+                            }]
+                        }
                     }
+                })
+                .then(res => {
+                    const stateIndex = res.states.findIndex(s => s.name === projectsEditName);
+
+                    res.states[stateIndex].resolve.scmCredentialType = ResolveScmCredentialType;
+                    res.states[stateIndex].resolve.insightsCredentialType = ResolveInsightsCredentialType;
+
+                    return res;
                 });
 
                 return Promise.all([
-                    projectTree
+                    projectAdd,
+                    projectEdit,
                 ]).then((generated) => {
                     return {
                         states: _.reduce(generated, (result, definition) => {
                             return result.concat(definition.states);
                         }, [
+                            stateExtender.buildDefinition(projectsListRoute),
                             stateExtender.buildDefinition(ProjectsTemplatesRoute),
+                            stateExtender.buildDefinition(projectsSchedulesListRoute),
+                            stateExtender.buildDefinition(projectsSchedulesAddRoute),
+                            stateExtender.buildDefinition(projectsSchedulesEditRoute)
                         ])
                     };
                 });

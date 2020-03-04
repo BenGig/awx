@@ -8,6 +8,7 @@ from django.db import models
 from django.conf import settings
 
 from awx.main.utils.filters import SmartFilter
+from awx.main.utils.pglock import advisory_lock
 
 ___all__ = ['HostManager', 'InstanceManager', 'InstanceGroupManager']
 
@@ -28,6 +29,34 @@ class HostManager(models.Manager):
         """
         return self.order_by().exclude(inventory_sources__source='tower').values('name').distinct().count()
 
+    def org_active_count(self, org_id):
+        """Return count of active, unique hosts used by an organization.
+        Construction of query involves:
+         - remove any ordering specified in model's Meta
+         - Exclude hosts sourced from another Tower
+         - Consider only hosts where the canonical inventory is owned by the organization
+         - Restrict the query to only return the name column
+         - Only consider results that are unique
+         - Return the count of this query
+        """
+        return self.order_by().exclude(
+            inventory_sources__source='tower'
+        ).filter(inventory__organization=org_id).values('name').distinct().count()
+
+    def active_counts_by_org(self):
+        """Return the counts of active, unique hosts for each organization.
+        Construction of query involves:
+         - remove any ordering specified in model's Meta
+         - Exclude hosts sourced from another Tower
+         - Consider only hosts where the canonical inventory is owned by each organization
+         - Restrict the query to only count distinct names
+         - Return the counts
+        """
+        return self.order_by().exclude(
+            inventory_sources__source='tower'
+        ).values('inventory__organization').annotate(
+            inventory__organization__count=models.Count('name', distinct=True))
+
     def get_queryset(self):
         """When the parent instance of the host query set has a `kind=smart` and a `host_filter`
         set. Use the `host_filter` to generate the queryset for the hosts.
@@ -37,20 +66,19 @@ class HostManager(models.Manager):
            hasattr(self.instance, 'host_filter') and
            hasattr(self.instance, 'kind')):
             if self.instance.kind == 'smart' and self.instance.host_filter is not None:
-                    q = SmartFilter.query_from_string(self.instance.host_filter)
-                    if self.instance.organization_id:
-                        q = q.filter(inventory__organization=self.instance.organization_id)
-                    # If we are using host_filters, disable the core_filters, this allows
-                    # us to access all of the available Host entries, not just the ones associated
-                    # with a specific FK/relation.
-                    #
-                    # If we don't disable this, a filter of {'inventory': self.instance} gets automatically
-                    # injected by the related object mapper.
-                    self.core_filters = {}
+                q = SmartFilter.query_from_string(self.instance.host_filter)
+                if self.instance.organization_id:
+                    q = q.filter(inventory__organization=self.instance.organization_id)
+                # If we are using host_filters, disable the core_filters, this allows
+                # us to access all of the available Host entries, not just the ones associated
+                # with a specific FK/relation.
+                #
+                # If we don't disable this, a filter of {'inventory': self.instance} gets automatically
+                # injected by the related object mapper.
+                self.core_filters = {}
 
-                    qs = qs & q
-                    unique_by_name = qs.order_by('name', 'pk').distinct('name')
-                    return qs.filter(pk__in=unique_by_name)
+                qs = qs & q
+                return qs.order_by('name', 'pk').distinct('name')
         return qs
 
 
@@ -76,7 +104,7 @@ class InstanceManager(models.Manager):
     def me(self):
         """Return the currently active instance."""
         # If we are running unit tests, return a stub record.
-        if settings.IS_TESTING(sys.argv):
+        if settings.IS_TESTING(sys.argv) or hasattr(sys, '_called_from_test'):
             return self.model(id=1,
                               hostname='localhost',
                               uuid='00000000-0000-0000-0000-000000000000')
@@ -86,6 +114,24 @@ class InstanceManager(models.Manager):
             return node[0]
         raise RuntimeError("No instance found with the current cluster host id")
 
+    def register(self, uuid=None, hostname=None):
+        if not uuid:
+            uuid = settings.SYSTEM_UUID
+        if not hostname:
+            hostname = settings.CLUSTER_HOST_ID
+        with advisory_lock('instance_registration_%s' % hostname):
+            instance = self.filter(hostname=hostname)
+            if instance.exists():
+                return (False, instance[0])
+            instance = self.create(uuid=uuid, hostname=hostname, capacity=0)
+        return (True, instance)
+
+    def get_or_register(self):
+        if settings.AWX_AUTO_DEPROVISION_INSTANCES:
+            return self.register()
+        else:
+            return (False, self.me())
+
     def active_count(self):
         """Return count of active Tower nodes for licensing."""
         return self.all().count()
@@ -93,6 +139,9 @@ class InstanceManager(models.Manager):
     def my_role(self):
         # NOTE: TODO: Likely to repurpose this once standalone ramparts are a thing
         return "tower"
+
+    def all_non_isolated(self):
+        return self.exclude(rampart_groups__controller__isnull=False)
 
 
 class InstanceGroupManager(models.Manager):
@@ -156,8 +205,6 @@ class InstanceGroupManager(models.Manager):
             if t.status == 'waiting' or not t.execution_node:
                 # Subtract capacity from any peer groups that share instances
                 if not t.instance_group:
-                    logger.warning('Excluded %s from capacity algorithm '
-                                   '(missing instance_group).', t.log_format)
                     impacted_groups = []
                 elif t.instance_group.name not in ig_ig_mapping:
                     # Waiting job in group with 0 capacity has no collateral impact
@@ -173,8 +220,9 @@ class InstanceGroupManager(models.Manager):
             elif t.status == 'running':
                 # Subtract capacity from all groups that contain the instance
                 if t.execution_node not in instance_ig_mapping:
-                    logger.warning('Detected %s running inside lost instance, '
-                                   'may still be waiting for reaper.', t.log_format)
+                    if not t.is_containerized:
+                        logger.warning('Detected %s running inside lost instance, '
+                                       'may still be waiting for reaper.', t.log_format)
                     if t.instance_group:
                         impacted_groups = [t.instance_group.name]
                     else:

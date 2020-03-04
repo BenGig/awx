@@ -4,34 +4,23 @@
  * All Rights Reserved
  *************************************************/
 
-export default ['$state', '$stateParams', '$scope', 'RelatedHostsFormDefinition', 'ParseTypeChange',
-                'GenerateForm', 'HostsService', 'rbacUiControlService', 'GetBasePath', 'ToJSON', 'canAdd',
-                function($state, $stateParams, $scope, RelatedHostsFormDefinition, ParseTypeChange,
-                         GenerateForm, HostsService, rbacUiControlService, GetBasePath, ToJSON, canAdd) {
+export default ['$state', '$stateParams', '$scope', 'RelatedHostsFormDefinition',
+                'GenerateForm', 'HostsService', 'ToJSON', 'canAdd',
+                function($state, $stateParams, $scope, RelatedHostsFormDefinition,
+                         GenerateForm, HostsService, ToJSON, canAdd) {
 
         init();
 
         function init() {
             $scope.canAdd = canAdd;
-            $scope.parseType = 'yaml';
             $scope.host = { enabled: true };
             // apply form definition's default field values
             GenerateForm.applyDefaults(RelatedHostsFormDefinition, $scope);
-
-            ParseTypeChange({
-                scope: $scope,
-                field_id: 'host_host_variables',
-                variable: 'host_variables',
-                parse_variable: 'parseType'
-            });
         }
         $scope.formCancel = function() {
             $state.go('^');
         };
         $scope.toggleHostEnabled = function() {
-            if ($scope.host.has_inventory_sources){
-                return;
-            }
             $scope.host.enabled = !$scope.host.enabled;
         };
         $scope.formSave = function(){

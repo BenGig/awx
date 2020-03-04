@@ -5,7 +5,7 @@
 import inspect
 import logging
 import time
-import six
+import urllib.parse
 
 # Django
 from django.conf import settings
@@ -22,25 +22,32 @@ from django.utils.translation import ugettext_lazy as _
 from django.contrib.auth import views as auth_views
 
 # Django REST Framework
-from rest_framework.authentication import get_authorization_header
-from rest_framework.exceptions import PermissionDenied, AuthenticationFailed
+from rest_framework.exceptions import PermissionDenied, AuthenticationFailed, ParseError, NotAcceptable, UnsupportedMediaType
 from rest_framework import generics
 from rest_framework.response import Response
 from rest_framework import status
 from rest_framework import views
 from rest_framework.permissions import AllowAny
-
-# cryptography
-from cryptography.fernet import InvalidToken
+from rest_framework.renderers import StaticHTMLRenderer, JSONRenderer
+from rest_framework.negotiation import DefaultContentNegotiation
 
 # AWX
 from awx.api.filters import FieldLookupBackend
-from awx.main.models import *  # noqa
+from awx.main.models import (
+    UnifiedJob, UnifiedJobTemplate, User, Role, Credential,
+    WorkflowJobTemplateNode, WorkflowApprovalTemplate
+)
 from awx.main.access import access_registry
-from awx.main.utils import * # noqa
+from awx.main.utils import (
+    camelcase_to_underscore,
+    get_search_fields,
+    getattrd,
+    get_object_or_400,
+    decrypt_field
+)
 from awx.main.utils.db import get_all_field_names
-from awx.api.serializers import ResourceAccessListElementSerializer, CopySerializer
-from awx.api.versioning import URLPathVersioning, get_request_version
+from awx.api.serializers import ResourceAccessListElementSerializer, CopySerializer, UserSerializer
+from awx.api.versioning import URLPathVersioning
 from awx.api.metadata import SublistAttachDetatchMetadata, Metadata
 
 __all__ = ['APIView', 'GenericAPIView', 'ListAPIView', 'SimpleListAPIView',
@@ -54,7 +61,7 @@ __all__ = ['APIView', 'GenericAPIView', 'ListAPIView', 'SimpleListAPIView',
            'ParentMixin',
            'DeleteLastUnattachLabelMixin',
            'SubListAttachDetachAPIView',
-           'CopyAPIView']
+           'CopyAPIView', 'BaseUsersList',]
 
 logger = logging.getLogger('awx.api.generics')
 analytics_logger = logging.getLogger('awx.analytics.performance')
@@ -62,16 +69,40 @@ analytics_logger = logging.getLogger('awx.analytics.performance')
 
 class LoggedLoginView(auth_views.LoginView):
 
+    def get(self, request, *args, **kwargs):
+        # The django.auth.contrib login form doesn't perform the content
+        # negotiation we've come to expect from DRF; add in code to catch
+        # situations where Accept != text/html (or */*) and reply with
+        # an HTTP 406
+        try:
+            DefaultContentNegotiation().select_renderer(
+                request,
+                [StaticHTMLRenderer],
+                'html'
+            )
+        except NotAcceptable:
+            resp = Response(status=status.HTTP_406_NOT_ACCEPTABLE)
+            resp.accepted_renderer = StaticHTMLRenderer()
+            resp.accepted_media_type = 'text/plain'
+            resp.renderer_context = {}
+            return resp
+        return super(LoggedLoginView, self).get(request, *args, **kwargs)
+
     def post(self, request, *args, **kwargs):
-        original_user = getattr(request, 'user', None)
         ret = super(LoggedLoginView, self).post(request, *args, **kwargs)
         current_user = getattr(request, 'user', None)
-
-        if current_user and getattr(current_user, 'pk', None) and current_user != original_user:
-            logger.info("User {} logged in.".format(current_user.username))
         if request.user.is_authenticated:
+            logger.info(smart_text(u"User {} logged in from {}".format(self.request.user.username,request.META.get('REMOTE_ADDR', None))))
+            ret.set_cookie('userLoggedIn', 'true')
+            current_user = UserSerializer(self.request.user)
+            current_user = smart_text(JSONRenderer().render(current_user.data))
+            current_user = urllib.parse.quote('%s' % current_user, '')
+            ret.set_cookie('current_user', current_user, secure=settings.SESSION_COOKIE_SECURE or None)
+
             return ret
         else:
+            if 'username' in self.request.POST:
+                logger.warn(smart_text(u"Login failed for user {} from {}".format(self.request.POST.get('username'),request.META.get('REMOTE_ADDR', None))))
             ret.status_code = 401
             return ret
 
@@ -82,45 +113,19 @@ class LoggedLogoutView(auth_views.LogoutView):
         original_user = getattr(request, 'user', None)
         ret = super(LoggedLogoutView, self).dispatch(request, *args, **kwargs)
         current_user = getattr(request, 'user', None)
+        ret.set_cookie('userLoggedIn', 'false')
         if (not current_user or not getattr(current_user, 'pk', True)) \
                 and current_user != original_user:
             logger.info("User {} logged out.".format(original_user.username))
         return ret
 
 
-def get_view_name(cls, suffix=None):
-    '''
-    Wrapper around REST framework get_view_name() to support get_name() method
-    and view_name property on a view class.
-    '''
-    name = ''
-    if hasattr(cls, 'get_name') and callable(cls.get_name):
-        name = cls().get_name()
-    elif hasattr(cls, 'view_name'):
-        if callable(cls.view_name):
-            name = cls.view_name()
-        else:
-            name = cls.view_name
-    if name:
-        return ('%s %s' % (name, suffix)) if suffix else name
-    return views.get_view_name(cls, suffix=None)
+def get_view_description(view, html=False):
+    '''Wrapper around REST framework get_view_description() to continue
+    to support our historical div.
 
-
-def get_view_description(cls, request, html=False):
     '''
-    Wrapper around REST framework get_view_description() to support
-    get_description() method and view_description property on a view class.
-    '''
-    if hasattr(cls, 'get_description') and callable(cls.get_description):
-        desc = cls().get_description(request, html=html)
-        cls = type(cls.__name__, (object,), {'__doc__': desc})
-    elif hasattr(cls, 'view_description'):
-        if callable(cls.view_description):
-            view_desc = cls.view_description()
-        else:
-            view_desc = cls.view_description
-        cls = type(cls.__name__, (object,), {'__doc__': view_desc})
-    desc = views.get_view_description(cls, html=html)
+    desc = views.get_view_description(view, html=html)
     if html:
         desc = '<div class="description">%s</div>' % desc
     return mark_safe(desc)
@@ -165,6 +170,13 @@ class APIView(views.APIView):
             request.drf_request_user = getattr(drf_request, 'user', False)
         except AuthenticationFailed:
             request.drf_request_user = None
+        except (PermissionDenied, ParseError) as exc:
+            request.drf_request_user = None
+            self.__init_request_error__ = exc
+        except UnsupportedMediaType as exc:
+            exc.detail = _('You did not use correct Content-Type in your HTTP request. '
+                           'If you are using our REST API, the Content-Type must be application/json')
+            self.__init_request_error__ = exc
         return drf_request
 
     def finalize_response(self, request, response, *args, **kwargs):
@@ -174,10 +186,13 @@ class APIView(views.APIView):
         if response.status_code >= 400:
             status_msg = "status %s received by user %s attempting to access %s from %s" % \
                          (response.status_code, request.user, request.path, request.META.get('REMOTE_ADDR', None))
+            if hasattr(self, '__init_request_error__'):
+                response = self.handle_exception(self.__init_request_error__)
             if response.status_code == 401:
+                response.data['detail'] += ' To establish a login session, visit /api/login/.'
                 logger.info(status_msg)
             else:
-                logger.warn(status_msg)
+                logger.warning(status_msg)
         response = super(APIView, self).finalize_response(request, response, *args, **kwargs)
         time_started = getattr(self, 'time_started', None)
         response['X-API-Node'] = settings.CLUSTER_HOST_ID
@@ -190,37 +205,41 @@ class APIView(views.APIView):
             response['X-API-Query-Count'] = len(q_times)
             response['X-API-Query-Time'] = '%0.3fs' % sum(q_times)
 
+        if getattr(self, 'deprecated', False):
+            response['Warning'] = '299 awx "This resource has been deprecated and will be removed in a future release."'  # noqa
+
         return response
 
     def get_authenticate_header(self, request):
-        """
-        Determine the WWW-Authenticate header to use for 401 responses.  Try to
-        use the request header as an indication for which authentication method
-        was attempted.
-        """
-        for authenticator in self.get_authenticators():
-            resp_hdr = authenticator.authenticate_header(request)
-            if not resp_hdr:
-                continue
-            req_hdr = get_authorization_header(request)
-            if not req_hdr:
-                continue
-            if resp_hdr.split()[0] and resp_hdr.split()[0] == req_hdr.split()[0]:
-                return resp_hdr
-        # If it can't be determined from the request, use the last
-        # authenticator (should be Basic).
-        try:
-            return authenticator.authenticate_header(request)
-        except NameError:
-            pass
-
-    def get_view_description(self, html=False):
-        """
-        Return some descriptive text for the view, as used in OPTIONS responses
-        and in the browsable API.
-        """
-        func = self.settings.VIEW_DESCRIPTION_FUNCTION
-        return func(self.__class__, getattr(self, '_request', None), html)
+        # HTTP Basic auth is insecure by default, because the basic auth
+        # backend does not provide CSRF protection.
+        #
+        # If you visit `/api/v2/job_templates/` and we return
+        # `WWW-Authenticate: Basic ...`, your browser will prompt you for an
+        # HTTP basic auth username+password and will store it _in the browser_
+        # for subsequent requests.  Because basic auth does not require CSRF
+        # validation (because it's commonly used with e.g., tower-cli and other
+        # non-browser clients), browsers that save basic auth in this way are
+        # vulnerable to cross-site request forgery:
+        #
+        # 1. Visit `/api/v2/job_templates/` and specify a user+pass for basic auth.
+        # 2. Visit a nefarious website and submit a
+        #    `<form action='POST' method='https://tower.example.org/api/v2/job_templates/N/launch/'>`
+        # 3. The browser will use your persisted user+pass and your login
+        #    session is effectively hijacked.
+        #
+        # To prevent this, we will _no longer_ send `WWW-Authenticate: Basic ...`
+        # headers in responses; this means that unauthenticated /api/v2/... requests
+        # will now return HTTP 401 in-browser, rather than popping up an auth dialog.
+        #
+        # This means that people who wish to use the interactive API browser
+        # must _first_ login in via `/api/login/` to establish a session (which
+        # _does_ enforce CSRF).
+        #
+        # CLI users can _still_ specify basic auth credentials explicitly via
+        # a header or in the URL e.g.,
+        # `curl https://user:pass@tower.example.org/api/v2/job_templates/N/launch/`
+        return 'Bearer realm=api authorization_url=/api/o/authorize/'
 
     def get_description_context(self):
         return {
@@ -230,19 +249,13 @@ class APIView(views.APIView):
             'swagger_method': getattr(self.request, 'swagger_method', None),
         }
 
-    def get_description(self, request, html=False):
-        self.request = request
+    @property
+    def description(self):
         template_list = []
         for klass in inspect.getmro(type(self)):
             template_basename = camelcase_to_underscore(klass.__name__)
             template_list.append('api/%s.md' % template_basename)
         context = self.get_description_context()
-
-        # "v2" -> 2
-        default_version = int(settings.REST_FRAMEWORK['DEFAULT_VERSION'].lstrip('v'))
-        request_version = get_request_version(self.request)
-        if request_version is not None and request_version < default_version:
-            context['deprecated'] = True
 
         description = render_to_string(template_list, context)
         if context.get('deprecated') and context.get('swagger_method') is None:
@@ -261,7 +274,7 @@ class APIView(views.APIView):
         # submitted data was rejected.
         request_method = getattr(self, '_raw_data_request_method', None)
         response_status = getattr(self, '_raw_data_response_status', 0)
-        if request_method in ('POST', 'PUT', 'PATCH') and response_status in xrange(400, 500):
+        if request_method in ('POST', 'PUT', 'PATCH') and response_status in range(400, 500):
             return self.request.data.copy()
 
         return data
@@ -283,6 +296,12 @@ class APIView(views.APIView):
                 kwargs.pop('version')
         return super(APIView, self).dispatch(request, *args, **kwargs)
 
+    def check_permissions(self, request):
+        if request.method not in ('GET', 'OPTIONS', 'HEAD'):
+            if 'write' not in getattr(request.user, 'oauth_scopes', ['write']):
+                raise PermissionDenied()
+        return super(APIView, self).check_permissions(request)
+
 
 class GenericAPIView(generics.GenericAPIView, APIView):
     # Base class for all model-based views.
@@ -298,7 +317,7 @@ class GenericAPIView(generics.GenericAPIView, APIView):
         # form.
         if hasattr(self, '_raw_data_form_marker'):
             # Always remove read only fields from serializer.
-            for name, field in serializer.fields.items():
+            for name, field in list(serializer.fields.items()):
                 if getattr(field, 'read_only', None):
                     del serializer.fields[name]
             serializer._data = self.update_raw_data(serializer.data)
@@ -333,14 +352,15 @@ class GenericAPIView(generics.GenericAPIView, APIView):
                     'model_verbose_name_plural': smart_text(self.model._meta.verbose_name_plural),
                 })
             serializer = self.get_serializer()
+            metadata = self.metadata_class()
+            metadata.request = self.request
             for method, key in [
                 ('GET', 'serializer_fields'),
                 ('POST', 'serializer_create_fields'),
                 ('PUT', 'serializer_update_fields')
             ]:
-                d[key] = self.metadata_class().get_serializer_info(serializer, method=method)
+                d[key] = metadata.get_serializer_info(serializer, method=method)
         d['settings'] = settings
-        d['has_named_url'] = self.model in settings.NAMED_URL_GRAPH
         return d
 
 
@@ -385,21 +405,21 @@ class ListAPIView(generics.ListAPIView, GenericAPIView):
                 continue
             if getattr(field, 'related_model', None):
                 fields.add('{}__search'.format(field.name))
-        for rel in self.model._meta.related_objects:
-            name = rel.related_name
-            if isinstance(rel, OneToOneRel) and self.model._meta.verbose_name.startswith('unified'):
+        for related in self.model._meta.related_objects:
+            name = related.related_name
+            if isinstance(related, OneToOneRel) and self.model._meta.verbose_name.startswith('unified'):
                 # Add underscores for polymorphic subclasses for user utility
-                name = rel.related_model._meta.verbose_name.replace(" ", "_")
+                name = related.related_model._meta.verbose_name.replace(" ", "_")
             if skip_related_name(name) or name.endswith('+'):
                 continue
             fields.add('{}__search'.format(name))
-        m2m_rel = []
-        m2m_rel += self.model._meta.local_many_to_many
+        m2m_related = []
+        m2m_related += self.model._meta.local_many_to_many
         if issubclass(self.model, UnifiedJobTemplate) and self.model != UnifiedJobTemplate:
-            m2m_rel += UnifiedJobTemplate._meta.local_many_to_many
+            m2m_related += UnifiedJobTemplate._meta.local_many_to_many
         if issubclass(self.model, UnifiedJob) and self.model != UnifiedJob:
-            m2m_rel += UnifiedJob._meta.local_many_to_many
-        for relationship in m2m_rel:
+            m2m_related += UnifiedJob._meta.local_many_to_many
+        for relationship in m2m_related:
             if skip_related_name(relationship.name):
                 continue
             if relationship.related_model._meta.app_label != 'main':
@@ -472,8 +492,11 @@ class SubListAPIView(ParentMixin, ListAPIView):
         parent = self.get_parent_object()
         self.check_parent_access(parent)
         qs = self.request.user.get_queryset(self.model).distinct()
-        sublist_qs = getattrd(parent, self.relationship).distinct()
+        sublist_qs = self.get_sublist_queryset(parent)
         return qs & sublist_qs
+
+    def get_sublist_queryset(self, parent):
+        return getattrd(parent, self.relationship).distinct()
 
 
 class DestroyAPIView(generics.DestroyAPIView):
@@ -503,9 +526,8 @@ class SubListDestroyAPIView(DestroyAPIView, SubListAPIView):
 
     def perform_list_destroy(self, instance_list):
         if self.check_sub_obj_permission:
-            # Check permissions for all before deleting, avoiding half-deleted lists
             for instance in instance_list:
-                if self.has_delete_permission(instance):
+                if not self.has_delete_permission(instance):
                     raise PermissionDenied()
         for instance in instance_list:
             self.perform_destroy(instance, check_permission=False)
@@ -552,7 +574,7 @@ class SubListCreateAPIView(SubListAPIView, ListCreateAPIView):
                             status=status.HTTP_400_BAD_REQUEST)
 
         # Verify we have permission to add the object as given.
-        if not request.user.can_access(self.model, 'add', serializer.initial_data):
+        if not request.user.can_access(self.model, 'add', serializer.validated_data):
             raise PermissionDenied()
 
         # save the object through the serializer, reload and returned the saved
@@ -700,7 +722,7 @@ class SubListAttachDetachAPIView(SubListCreateAttachDetachAPIView):
     def update_raw_data(self, data):
         request_method = getattr(self, '_raw_data_request_method', None)
         response_status = getattr(self, '_raw_data_response_status', 0)
-        if request_method == 'POST' and response_status in xrange(400, 500):
+        if request_method == 'POST' and response_status in range(400, 500):
             return super(SubListAttachDetachAPIView, self).update_raw_data(data)
         return {'id': None}
 
@@ -711,6 +733,7 @@ class DeleteLastUnattachLabelMixin(object):
     when the last disassociate is called should inherit from this class. Further,
     the model should implement is_detached()
     '''
+
     def unattach(self, request, *args, **kwargs):
         (sub_id, res) = super(DeleteLastUnattachLabelMixin, self).unattach_validate(request)
         if res:
@@ -760,6 +783,7 @@ class RetrieveUpdateDestroyAPIView(RetrieveUpdateAPIView, DestroyAPIView):
 class ResourceAccessList(ParentMixin, ListAPIView):
 
     serializer_class = ResourceAccessListElementSerializer
+    ordering = ('username',)
 
     def get_queryset(self):
         obj = self.get_parent_object()
@@ -799,17 +823,20 @@ class CopyAPIView(GenericAPIView):
     def _decrypt_model_field_if_needed(obj, field_name, field_val):
         if field_name in getattr(type(obj), 'REENCRYPTION_BLACKLIST_AT_COPY', []):
             return field_val
-        if isinstance(field_val, dict):
+        if isinstance(obj, Credential) and field_name == 'inputs':
+            for secret in obj.credential_type.secret_fields:
+                if secret in field_val:
+                    field_val[secret] = decrypt_field(obj, secret)
+        elif isinstance(field_val, dict):
             for sub_field in field_val:
-                if isinstance(sub_field, six.string_types) \
-                        and isinstance(field_val[sub_field], six.string_types):
-                    try:
-                        field_val[sub_field] = decrypt_field(obj, field_name, sub_field)
-                    except InvalidToken:
-                        # Catching the corner case with v1 credential fields
-                        field_val[sub_field] = decrypt_field(obj, sub_field)
-        elif isinstance(field_val, six.string_types):
-            field_val = decrypt_field(obj, field_name)
+                if isinstance(sub_field, str) \
+                        and isinstance(field_val[sub_field], str):
+                    field_val[sub_field] = decrypt_field(obj, field_name, sub_field)
+        elif isinstance(field_val, str):
+            try:
+                field_val = decrypt_field(obj, field_name)
+            except AttributeError:
+                return field_val
         return field_val
 
     def _build_create_dict(self, obj):
@@ -862,14 +889,34 @@ class CopyAPIView(GenericAPIView):
                 create_kwargs[field.name] = CopyAPIView._decrypt_model_field_if_needed(
                     obj, field.name, field_val
                 )
+
+        # WorkflowJobTemplateNodes that represent an approval are *special*;
+        # when we copy them, we actually want to *copy* the UJT they point at
+        # rather than share the template reference between nodes in disparate
+        # workflows
+        if (
+            isinstance(obj, WorkflowJobTemplateNode) and
+            isinstance(getattr(obj, 'unified_job_template'), WorkflowApprovalTemplate)
+        ):
+            new_approval_template, sub_objs = CopyAPIView.copy_model_obj(
+                None, None, WorkflowApprovalTemplate,
+                obj.unified_job_template, creater
+            )
+            create_kwargs['unified_job_template'] = new_approval_template
+
         new_obj = model.objects.create(**create_kwargs)
+        logger.debug('Deep copy: Created new object {}({})'.format(
+            new_obj, model
+        ))
         # Need to save separatedly because Djang-crum get_current_user would
         # not work properly in non-request-response-cycle context.
         new_obj.created_by = creater
         new_obj.save()
-        for m2m in m2m_to_preserve:
-            for related_obj in m2m_to_preserve[m2m].all():
-                getattr(new_obj, m2m).add(related_obj)
+        from awx.main.signals import disable_activity_stream
+        with disable_activity_stream():
+            for m2m in m2m_to_preserve:
+                for related_obj in m2m_to_preserve[m2m].all():
+                    getattr(new_obj, m2m).add(related_obj)
         if not old_parent:
             sub_objects = []
             for o2m in o2m_to_preserve:
@@ -885,10 +932,17 @@ class CopyAPIView(GenericAPIView):
 
     def get(self, request, *args, **kwargs):
         obj = self.get_object()
+        if not request.user.can_access(obj.__class__, 'read', obj):
+            raise PermissionDenied()
         create_kwargs = self._build_create_dict(obj)
         for key in create_kwargs:
             create_kwargs[key] = getattr(create_kwargs[key], 'pk', None) or create_kwargs[key]
-        return Response({'can_copy': request.user.can_access(self.model, 'add', create_kwargs)})
+        try:
+            can_copy = request.user.can_access(self.model, 'add', create_kwargs) and \
+                request.user.can_access(self.model, 'copy_related', obj)
+        except PermissionDenied:
+            return Response({'can_copy': False})
+        return Response({'can_copy': can_copy})
 
     def post(self, request, *args, **kwargs):
         obj = self.get_object()
@@ -898,6 +952,8 @@ class CopyAPIView(GenericAPIView):
             create_kwargs_check[key] = getattr(create_kwargs[key], 'pk', None) or create_kwargs[key]
         if not request.user.can_access(self.model, 'add', create_kwargs_check):
             raise PermissionDenied()
+        if not request.user.can_access(self.model, 'copy_related', obj):
+            raise PermissionDenied()
         serializer = self.get_serializer(data=request.data)
         if not serializer.is_valid():
             return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
@@ -905,7 +961,7 @@ class CopyAPIView(GenericAPIView):
             None, None, self.model, obj, request.user, create_kwargs=create_kwargs,
             copy_name=serializer.validated_data.get('name', '')
         )
-        if hasattr(new_obj, 'admin_role') and request.user not in new_obj.admin_role:
+        if hasattr(new_obj, 'admin_role') and request.user not in new_obj.admin_role.members.all():
             new_obj.admin_role.members.add(request.user)
         if sub_objs:
             permission_check_func = None
@@ -919,4 +975,24 @@ class CopyAPIView(GenericAPIView):
                 permission_check_func=permission_check_func
             )
         serializer = self._get_copy_return_serializer(new_obj)
-        return Response(serializer.data, status=status.HTTP_201_CREATED)
+        headers = {'Location': new_obj.get_absolute_url(request=request)}
+        return Response(serializer.data, status=status.HTTP_201_CREATED, headers=headers)
+
+
+class BaseUsersList(SubListCreateAttachDetachAPIView):
+    def post(self, request, *args, **kwargs):
+        ret = super(BaseUsersList, self).post( request, *args, **kwargs)
+        if ret.status_code != 201:
+            return ret
+        try:
+            if ret.data is not None and request.data.get('is_system_auditor', False):
+                # This is a faux-field that just maps to checking the system
+                # auditor role member list.. unfortunately this means we can't
+                # set it on creation, and thus needs to be set here.
+                user = User.objects.get(id=ret.data['id'])
+                user.is_system_auditor = request.data['is_system_auditor']
+                ret.data['is_system_auditor'] = request.data['is_system_auditor']
+        except AttributeError as exc:
+            print(exc)
+            pass
+        return ret

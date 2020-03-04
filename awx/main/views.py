@@ -1,13 +1,19 @@
 # Copyright (c) 2015 Ansible, Inc.
 # All Rights Reserved.
 
+import json
+
 # Django
+from django.http import HttpResponse, HttpResponseRedirect
 from django.shortcuts import render
 from django.utils.html import format_html
 from django.utils.translation import ugettext_lazy as _
+from django.views.decorators.csrf import csrf_exempt
 
 # Django REST Framework
 from rest_framework import exceptions, permissions, views
+
+import logging
 
 
 def _force_raising_exception(view_obj, request, format=None):
@@ -20,10 +26,8 @@ class ApiErrorView(views.APIView):
     permission_classes = (permissions.AllowAny,)
     metadata_class = None
     exception_class = exceptions.APIException
-    view_name = _('API Error')
 
-    def get_view_name(self):
-        return self.view_name
+    name = _('API Error')
 
     def finalize_response(self, request, response, *args, **kwargs):
         response = super(ApiErrorView, self).finalize_response(request, response, *args, **kwargs)
@@ -46,7 +50,7 @@ def handle_error(request, status=404, **kwargs):
         class APIException(exceptions.APIException):
             status_code = status
             default_detail = kwargs['content']
-        api_error_view = ApiErrorView.as_view(view_name=kwargs['name'], exception_class=APIException)
+        api_error_view = ApiErrorView.as_view(exception_class=APIException)
         response = api_error_view(request)
         if hasattr(response, 'render'):
             response.render()
@@ -56,7 +60,7 @@ def handle_error(request, status=404, **kwargs):
         return render(request, 'error.html', kwargs, status=status)
 
 
-def handle_400(request):
+def handle_400(request, exception):
     kwargs = {
         'name': _('Bad Request'),
         'content': _('The request could not be understood by the server.'),
@@ -64,7 +68,7 @@ def handle_400(request):
     return handle_error(request, 400, **kwargs)
 
 
-def handle_403(request):
+def handle_403(request, exception):
     kwargs = {
         'name': _('Forbidden'),
         'content': _('You don\'t have permission to access the requested resource.'),
@@ -72,7 +76,7 @@ def handle_403(request):
     return handle_error(request, 403, **kwargs)
 
 
-def handle_404(request):
+def handle_404(request, exception):
     kwargs = {
         'name': _('Not Found'),
         'content': _('The requested resource could not be found.'),
@@ -86,3 +90,14 @@ def handle_500(request):
         'content': _('A server error has occurred.'),
     }
     return handle_error(request, 500, **kwargs)
+
+
+@csrf_exempt
+def handle_csp_violation(request):
+    logger = logging.getLogger('awx')
+    logger.error(json.loads(request.body))
+    return HttpResponse(content=None)
+
+
+def handle_login_redirect(request):
+    return HttpResponseRedirect("/#/login")

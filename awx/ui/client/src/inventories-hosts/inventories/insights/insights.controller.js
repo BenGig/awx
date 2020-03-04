@@ -5,9 +5,11 @@
  *************************************************/
 
 export default [ 'InsightsData', '$scope', 'moment', '$state', 'InventoryData',
-    'InsightsService', 'CanRemediate',
+    'InsightsService', 'CanRemediate', 'InsightsStrings',
 function (data, $scope, moment, $state, InventoryData, InsightsService,
-    CanRemediate) {
+    CanRemediate, strings) {
+
+    $scope.strings = strings;
 
     function init() {
         $scope.reports = (data && data.reports) ? data.reports : [];
@@ -26,6 +28,7 @@ function (data, $scope, moment, $state, InventoryData, InsightsService,
             InventoryData.summary_fields.insights_credential && InventoryData.summary_fields.insights_credential.id) ?
                 InventoryData.summary_fields.insights_credential.id : null;
         $scope.canRemediate = CanRemediate;
+        $scope.platformId = $scope.reports_dataset.platform_id;
     }
 
     function filter(str){
@@ -40,7 +43,7 @@ function (data, $scope, moment, $state, InventoryData, InsightsService,
     };
 
     $scope.viewDataInInsights = function(){
-        window.open(`https://access.redhat.com/insights/inventory?machine=${$scope.$parent.host.insights_system_id}`, '_blank');
+        window.open(`https://cloud.redhat.com/insights/inventory/${$scope.platformId}/insights`, '_blank');
     };
 
     $scope.remediateInventory = function(inv_id, insights_credential){

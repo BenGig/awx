@@ -1,5 +1,5 @@
 {% extends 'rest_framework/base.html' %}
-{% load i18n staticfiles %}
+{% load i18n static %}
 
 {% block title %}{{ name }} &middot; {% trans 'AWX REST API' %}{% endblock %}
 
@@ -37,7 +37,7 @@
           <li><a href="{% if request.version %}{% url 'api:user_me_list' version=request.version%}{% else %}{% url 'api:user_me_list' version="v2" %}{% endif %}" data-toggle="tooltip" data-placement="bottom" data-delay="1000" title="Logged in as {{ user }}{% if user.get_full_name %} ({{ user.get_full_name }}){% endif %}"><span class="glyphicon glyphicon-user"></span> <span class="visible-xs-inline">Logged in as </span>{{ user }}{% if user.get_full_name %}<span class="visible-xs-inline"> ({{ user.get_full_name }})</span>{% endif %}</a></li>
           <li><a href="{% url 'api:logout' %}?next=/api/login/" data-toggle="tooltip" data-placement="bottom" data-delay="1000" title="Log out"><span class="glyphicon glyphicon-log-out"></span>Log out</a></li>
           {% else %}
-          <li><a href="{% url 'api:login' %}" data-toggle="tooltip" data-placement="bottom" data-delay="1000" title="Log in"><span class="glyphicon glyphicon-log-in"></span>Log in</a></li>
+          <li><a href="{% url 'api:login' %}?next={{ request.get_full_path }}" data-toggle="tooltip" data-placement="bottom" data-delay="1000" title="Log in"><span class="glyphicon glyphicon-log-in"></span>Log in</a></li>
           {% endif %}
           <li><a href="//docs.ansible.com/ansible-tower/{{short_tower_version}}/html/towerapi/index.html" target="_blank" data-toggle="tooltip" data-placement="bottom" data-delay="1000" title="{% trans 'Ansible Tower API Guide' %}"><span class="glyphicon glyphicon-question-sign"></span><span class="visible-xs-inline">{% trans 'Ansible Tower API Guide' %}</span></a></li>
           <li><a href="/" data-toggle="tooltip" data-placement="bottom" data-delay="1000" title="{% trans 'Back to Ansible Tower' %}"><span class="glyphicon glyphicon-circle-arrow-left"></span><span class="visible-xs-inline">{% trans 'Back to Ansible Tower' %}</span></a></li>
@@ -48,6 +48,15 @@
   </div>
 {% endblock %}
 
+{% block content %}
+  {% if deprecated %}
+    <div class="breadcrumb" style="background: #FCC;">
+        <b>This resource has been deprecated and will be removed in a future release.</b>
+    </div>
+  {% endif %}
+{{ block.super }}
+{% endblock content %}
+
 {% block script %}
 <div id="footer">
   <div class="container">
@@ -55,7 +64,7 @@
       <div class="col-sm-6">
       </div>
       <div class="col-sm-6 footer-copyright">
-        Copyright &copy; 2017 <a href="http://www.redhat.com" target="_blank">Red Hat</a>, Inc. All Rights Reserved.
+        Copyright &copy; 2019 <a href="http://www.redhat.com" target="_blank">Red Hat</a>, Inc. All Rights Reserved.
       </div>
     </div>
   </div>

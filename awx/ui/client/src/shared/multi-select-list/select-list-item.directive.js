@@ -27,23 +27,21 @@ export default
         return {
             restrict: 'E',
             scope: {
-                item: '=item'
+                item: '=item',
+                disabled: '='
             },
             require: '^multiSelectList',
-            template: '<input type="checkbox" data-multi-select-list-item ng-model="item.isSelected" ng-click="userInteractionSelect()">',
+            template: '<input type="checkbox" data-multi-select-list-item ng-model="item.isSelected" ng-change="userInteractionSelect(item)" ng-disabled=disabled>',
             link: function(scope, element, attrs, multiSelectList) {
 
                 scope.decoratedItem = multiSelectList.registerItem(scope.item);
 
-                scope.$watch('item.isSelected', function(value) {
-                    if (value === true) {
+                scope.userInteractionSelect = function(item) {
+                    if (item.isSelected === true) {
                         multiSelectList.selectItem(scope.decoratedItem);
-                    } else if (value === false) {
+                    } else if (item.isSelected === false) {
                         multiSelectList.deselectItem(scope.decoratedItem);
                     }
-                });
-
-                scope.userInteractionSelect = function() {
                     scope.$emit("selectedOrDeselected", scope.decoratedItem);
                 };
 

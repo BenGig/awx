@@ -4,6 +4,7 @@
 # Python
 import json
 import logging
+import fnmatch
 import os
 import re
 import subprocess
@@ -11,16 +12,26 @@ import sys
 import time
 import traceback
 import shutil
+from distutils.version import LooseVersion as Version
 
 # Django
 from django.conf import settings
 from django.core.management.base import BaseCommand, CommandError
-from django.core.exceptions import ImproperlyConfigured
 from django.db import connection, transaction
 from django.utils.encoding import smart_text
 
-# AWX
-from awx.main.models import * # noqa
+# AWX inventory imports
+from awx.main.models.inventory import (
+    Inventory,
+    InventorySource,
+    InventoryUpdate,
+    Host
+)
+from awx.main.utils.mem_inventory import MemInventory, dict_to_mem_data
+from awx.main.utils.safe_yaml import sanitize_jinja
+
+# other AWX imports
+from awx.main.models.rbac import batch_role_ancestor_rebuilding
 from awx.main.utils import (
     ignore_inventory_computed_fields,
     check_proot_installed,
@@ -28,8 +39,10 @@ from awx.main.utils import (
     build_proot_temp_dir,
     get_licenser
 )
-from awx.main.utils.mem_inventory import MemInventory, dict_to_mem_data
+from awx.main.utils.common import _get_ansible_version
 from awx.main.signals import disable_activity_stream
+from awx.main.constants import STANDARD_INVENTORY_UPDATE_ENV
+from awx.main.utils.pglock import advisory_lock
 
 logger = logging.getLogger('awx.main.commands.inventory_import')
 
@@ -62,57 +75,78 @@ class AnsibleInventoryLoader(object):
     use the ansible-inventory CLI utility to convert it into in-memory
     representational objects. Example:
         /usr/bin/ansible/ansible-inventory -i hosts --list
-    If it fails to find this, it uses the backported script instead
     '''
 
-    def __init__(self, source, group_filter_re=None, host_filter_re=None, is_custom=False):
+    def __init__(self, source, is_custom=False, venv_path=None, verbosity=0):
         self.source = source
         self.source_dir = functioning_dir(self.source)
         self.is_custom = is_custom
         self.tmp_private_dir = None
         self.method = 'ansible-inventory'
-        self.group_filter_re = group_filter_re
-        self.host_filter_re = host_filter_re
-
-        self.is_vendored_source = False
-        if self.source_dir == os.path.join(settings.BASE_DIR, 'plugins', 'inventory'):
-            self.is_vendored_source = True
+        self.verbosity = verbosity
+        if venv_path:
+            self.venv_path = venv_path
+        else:
+            self.venv_path = settings.ANSIBLE_VENV_PATH
 
     def build_env(self):
         env = dict(os.environ.items())
-        env['VIRTUAL_ENV'] = settings.ANSIBLE_VENV_PATH
-        env['PATH'] = os.path.join(settings.ANSIBLE_VENV_PATH, "bin") + ":" + env['PATH']
-        env['ANSIBLE_INVENTORY_UNPARSED_FAILED'] = '1'
-        venv_libdir = os.path.join(settings.ANSIBLE_VENV_PATH, "lib")
+        env['VIRTUAL_ENV'] = self.venv_path
+        env['PATH'] = os.path.join(self.venv_path, "bin") + ":" + env['PATH']
+        # Set configuration items that should always be used for updates
+        for key, value in STANDARD_INVENTORY_UPDATE_ENV.items():
+            if key not in env:
+                env[key] = value
+        venv_libdir = os.path.join(self.venv_path, "lib")
         env.pop('PYTHONPATH', None)  # default to none if no python_ver matches
-        if os.path.isdir(os.path.join(venv_libdir, "python2.7")):
-            env['PYTHONPATH'] = os.path.join(venv_libdir, "python2.7", "site-packages") + ":"
+        for version in os.listdir(venv_libdir):
+            if fnmatch.fnmatch(version, 'python[23].*'):
+                if os.path.isdir(os.path.join(venv_libdir, version)):
+                    env['PYTHONPATH'] = os.path.join(venv_libdir, version, "site-packages") + ":"
+                    break
+        # For internal inventory updates, these are not reported in the job_env API
+        logger.info('Using VIRTUAL_ENV: {}'.format(env['VIRTUAL_ENV']))
+        logger.info('Using PATH: {}'.format(env['PATH']))
+        logger.info('Using PYTHONPATH: {}'.format(env.get('PYTHONPATH', None)))
         return env
+
+    def get_path_to_ansible_inventory(self):
+        venv_exe = os.path.join(self.venv_path, 'bin', 'ansible-inventory')
+        if os.path.exists(venv_exe):
+            return venv_exe
+        elif os.path.exists(
+            os.path.join(self.venv_path, 'bin', 'ansible')
+        ):
+            # if bin/ansible exists but bin/ansible-inventory doesn't, it's
+            # probably a really old version of ansible that doesn't support
+            # ansible-inventory
+            raise RuntimeError(
+                "{} does not exist (please upgrade to ansible >= 2.4)".format(
+                    venv_exe
+                )
+            )
+        return shutil.which('ansible-inventory')
 
     def get_base_args(self):
         # get ansible-inventory absolute path for running in bubblewrap/proot, in Popen
-        for path in os.environ["PATH"].split(os.pathsep):
-            potential_path = os.path.join(path.strip('"'), 'ansible-inventory')
-            if os.path.isfile(potential_path) and os.access(potential_path, os.X_OK):
-                logger.debug('Using system install of ansible-inventory CLI: {}'.format(potential_path))
-                return [potential_path, '-i', self.source]
-
-        # Stopgap solution for group_vars, do not use backported module for official
-        # vendored cloud modules or custom scripts TODO: remove after Ansible 2.3 deprecation
-        if self.is_vendored_source or self.is_custom:
-            self.method = 'inventory script invocation'
-            return [self.source]
-
-        # ansible-inventory was not found, look for backported module TODO: remove after Ansible 2.3 deprecation
-        abs_module_path = os.path.abspath(os.path.join(
-            os.path.dirname(__file__), '..', '..', '..', 'plugins',
-            'ansible_inventory', 'backport.py'))
-        self.method = 'ansible-inventory backport'
-
-        if not os.path.exists(abs_module_path):
-            raise ImproperlyConfigured('Cannot find inventory module')
-        logger.debug('Using backported ansible-inventory module: {}'.format(abs_module_path))
-        return [abs_module_path, '-i', self.source]
+        ansible_inventory_path = self.get_path_to_ansible_inventory()
+        # NOTE: why do we add "python" to the start of these args?
+        # the script that runs ansible-inventory specifies a python interpreter
+        # that makes no sense in light of the fact that we put all the dependencies
+        # inside of /venv/ansible, so we override the specified interpreter
+        # https://github.com/ansible/ansible/issues/50714
+        bargs = ['python', ansible_inventory_path, '-i', self.source]
+        ansible_version = _get_ansible_version(ansible_inventory_path[:-len('-inventory')])
+        if ansible_version != 'unknown':
+            this_version = Version(ansible_version)
+            if this_version >= Version('2.5'):
+                bargs.extend(['--playbook-dir', self.source_dir])
+            if this_version >= Version('2.8'):
+                if self.verbosity:
+                    # INFO: -vvv, DEBUG: -vvvvv, for inventory, any more than 3 makes little difference
+                    bargs.append('-{}'.format('v' * min(5, self.verbosity * 2 + 1)))
+        logger.debug('Using base command: {}'.format(' '.join(bargs)))
+        return bargs
 
     def get_proot_args(self, cmd, env):
         cwd = os.getcwd()
@@ -135,9 +169,11 @@ class AnsibleInventoryLoader(object):
             self.tmp_private_dir = build_proot_temp_dir()
             logger.debug("Using fresh temporary directory '{}' for isolation.".format(self.tmp_private_dir))
             kwargs['proot_temp_dir'] = self.tmp_private_dir
-            # Run from source's location so that custom script contents are in `show_paths`
-            cwd = functioning_dir(self.source)
+            kwargs['proot_show_paths'] = [functioning_dir(self.source)]
         logger.debug("Running from `{}` working directory.".format(cwd))
+
+        if self.venv_path != settings.ANSIBLE_VENV_PATH:
+            kwargs['proot_custom_virtualenv'] = self.venv_path
 
         return wrap_args_with_proot(cmd, cwd, **kwargs)
 
@@ -152,6 +188,8 @@ class AnsibleInventoryLoader(object):
 
         proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, env=env)
         stdout, stderr = proc.communicate()
+        stdout = smart_text(stdout)
+        stderr = smart_text(stderr)
 
         if self.tmp_private_dir:
             shutil.rmtree(self.tmp_private_dir, True)
@@ -174,80 +212,7 @@ class AnsibleInventoryLoader(object):
         base_args = self.get_base_args()
         logger.info('Reading Ansible inventory source: %s', self.source)
 
-        data = self.command_to_json(base_args + ['--list'])
-
-        # TODO: remove after we run custom scripts through ansible-inventory
-        if self.is_custom and '_meta' not in data or 'hostvars' not in data['_meta']:
-            # Invoke the executable once for each host name we've built up
-            # to set their variables
-            data.setdefault('_meta', {})
-            data['_meta'].setdefault('hostvars', {})
-            logger.warning('Re-calling script for hostvars individually.')
-            for group_name, group_data in data.iteritems():
-                if group_name == '_meta':
-                    continue
-
-                if isinstance(group_data, dict):
-                    group_host_list = group_data.get('hosts', [])
-                elif isinstance(group_data, list):
-                    group_host_list = group_data
-                else:
-                    logger.warning('Group data for "%s" is not a dict or list',
-                                   group_name)
-                    group_host_list = []
-
-                for hostname in group_host_list:
-                    logger.debug('Obtaining hostvars for %s' % hostname.encode('utf-8'))
-                    hostdata = self.command_to_json(
-                        base_args + ['--host', hostname.encode("utf-8")]
-                    )
-                    if isinstance(hostdata, dict):
-                        data['_meta']['hostvars'][hostname] = hostdata
-                    else:
-                        logger.warning(
-                            'Expected dict of vars for host "%s" when '
-                            'calling with `--host`, got %s instead',
-                            k, str(type(data))
-                        )
-
-        logger.info('Processing JSON output...')
-        inventory = MemInventory(
-            group_filter_re=self.group_filter_re, host_filter_re=self.host_filter_re)
-        inventory = dict_to_mem_data(data, inventory=inventory)
-
-        return inventory
-
-
-def load_inventory_source(source, group_filter_re=None,
-                          host_filter_re=None, exclude_empty_groups=False,
-                          is_custom=False):
-    '''
-    Load inventory from given source directory or file.
-    '''
-    # Sanity check: We sanitize these module names for our API but Ansible proper doesn't follow
-    # good naming conventions
-    source = source.replace('rhv.py', 'ovirt4.py')
-    source = source.replace('satellite6.py', 'foreman.py')
-    source = source.replace('vmware.py', 'vmware_inventory.py')
-    if not os.path.exists(source):
-        raise IOError('Source does not exist: %s' % source)
-    source = os.path.join(os.getcwd(), os.path.dirname(source),
-                          os.path.basename(source))
-    source = os.path.normpath(os.path.abspath(source))
-
-    inventory = AnsibleInventoryLoader(
-        source=source,
-        group_filter_re=group_filter_re,
-        host_filter_re=host_filter_re,
-        is_custom=is_custom).load()
-
-    logger.debug('Finished loading from source: %s', source)
-    # Exclude groups that are completely empty.
-    if exclude_empty_groups:
-        inventory.delete_empty_groups()
-    logger.info('Loaded %d groups, %d hosts', len(inventory.all_group.all_groups),
-                len(inventory.all_group.all_hosts))
-    return inventory.all_group
+        return self.command_to_json(base_args + ['--list'])
 
 
 class Command(BaseCommand):
@@ -265,6 +230,8 @@ class Command(BaseCommand):
         parser.add_argument('--inventory-id', dest='inventory_id', type=int,
                             default=None, metavar='i',
                             help='id of inventory to sync')
+        parser.add_argument('--venv', dest='venv', type=str, default=None,
+                            help='absolute path to the AWX custom virtualenv to use')
         parser.add_argument('--overwrite', dest='overwrite', action='store_true', default=False,
                             help='overwrite the destination hosts and groups')
         parser.add_argument('--overwrite-vars', dest='overwrite_vars',
@@ -344,7 +311,7 @@ class Command(BaseCommand):
             if enabled is not default:
                 enabled_value = getattr(self, 'enabled_value', None)
                 if enabled_value is not None:
-                    enabled = bool(unicode(enabled_value) == unicode(enabled))
+                    enabled = bool(str(enabled_value).lower() == str(enabled).lower())
                 else:
                     enabled = bool(enabled)
         if enabled is default:
@@ -353,6 +320,14 @@ class Command(BaseCommand):
             return enabled
         else:
             raise NotImplementedError('Value of enabled {} not understood.'.format(enabled))
+
+    def get_source_absolute_path(self, source):
+        if not os.path.exists(source):
+            raise IOError('Source does not exist: %s' % source)
+        source = os.path.join(os.getcwd(), os.path.dirname(source),
+                              os.path.basename(source))
+        source = os.path.normpath(os.path.abspath(source))
+        return source
 
     def load_inventory_from_database(self):
         '''
@@ -366,9 +341,9 @@ class Command(BaseCommand):
         try:
             self.inventory = Inventory.objects.get(**q)
         except Inventory.DoesNotExist:
-            raise CommandError('Inventory with %s = %s cannot be found' % q.items()[0])
+            raise CommandError('Inventory with %s = %s cannot be found' % list(q.items())[0])
         except Inventory.MultipleObjectsReturned:
-            raise CommandError('Inventory with %s = %s returned multiple results' % q.items()[0])
+            raise CommandError('Inventory with %s = %s returned multiple results' % list(q.items())[0])
         logger.info('Updating inventory %d: %s' % (self.inventory.pk,
                                                    self.inventory.name))
 
@@ -403,9 +378,7 @@ class Command(BaseCommand):
                     _eager_fields=dict(
                         job_args=json.dumps(sys.argv),
                         job_env=dict(os.environ.items()),
-                        job_cwd=os.getcwd(),
-                        execution_node=settings.CLUSTER_HOST_ID,
-                        instance_group=InstanceGroup.objects.get(name='tower'))
+                        job_cwd=os.getcwd())
                 )
 
         # FIXME: Wait or raise error if inventory is being updated by another
@@ -455,6 +428,16 @@ class Command(BaseCommand):
                 mem_host.instance_id = instance_id
                 self.mem_instance_id_map[instance_id] = mem_host.name
 
+    def _existing_host_pks(self):
+        '''Returns cached set of existing / previous host primary key values
+        this is the starting set, meaning that it is pre-modification
+        by deletions and other things done in the course of this import
+        '''
+        if not hasattr(self, '_cached_host_pk_set'):
+            self._cached_host_pk_set = frozenset(
+                self.inventory_source.hosts.values_list('pk', flat=True))
+        return self._cached_host_pk_set
+
     def _delete_hosts(self):
         '''
         For each host in the database that is NOT in the local list, delete
@@ -466,11 +449,11 @@ class Command(BaseCommand):
             queries_before = len(connection.queries)
         hosts_qs = self.inventory_source.hosts
         # Build list of all host pks, remove all that should not be deleted.
-        del_host_pks = set(hosts_qs.values_list('pk', flat=True))
+        del_host_pks = set(self._existing_host_pks())  # makes mutable copy
         if self.instance_id_var:
-            all_instance_ids = self.mem_instance_id_map.keys()
+            all_instance_ids = list(self.mem_instance_id_map.keys())
             instance_ids = []
-            for offset in xrange(0, len(all_instance_ids), self._batch_size):
+            for offset in range(0, len(all_instance_ids), self._batch_size):
                 instance_ids = all_instance_ids[offset:(offset + self._batch_size)]
                 for host_pk in hosts_qs.filter(instance_id__in=instance_ids).values_list('pk', flat=True):
                     del_host_pks.discard(host_pk)
@@ -478,19 +461,19 @@ class Command(BaseCommand):
                 del_host_pks.discard(host_pk)
             all_host_names = list(set(self.mem_instance_id_map.values()) - set(self.all_group.all_hosts.keys()))
         else:
-            all_host_names = self.all_group.all_hosts.keys()
-        for offset in xrange(0, len(all_host_names), self._batch_size):
+            all_host_names = list(self.all_group.all_hosts.keys())
+        for offset in range(0, len(all_host_names), self._batch_size):
             host_names = all_host_names[offset:(offset + self._batch_size)]
             for host_pk in hosts_qs.filter(name__in=host_names).values_list('pk', flat=True):
                 del_host_pks.discard(host_pk)
         # Now delete all remaining hosts in batches.
         all_del_pks = sorted(list(del_host_pks))
-        for offset in xrange(0, len(all_del_pks), self._batch_size):
+        for offset in range(0, len(all_del_pks), self._batch_size):
             del_pks = all_del_pks[offset:(offset + self._batch_size)]
             for host in hosts_qs.filter(pk__in=del_pks):
                 host_name = host.name
                 host.delete()
-                logger.info('Deleted host "%s"', host_name)
+                logger.debug('Deleted host "%s"', host_name)
         if settings.SQL_DEBUG:
             logger.warning('host deletions took %d queries for %d hosts',
                            len(connection.queries) - queries_before,
@@ -508,8 +491,8 @@ class Command(BaseCommand):
         groups_qs = self.inventory_source.groups.all()
         # Build list of all group pks, remove those that should not be deleted.
         del_group_pks = set(groups_qs.values_list('pk', flat=True))
-        all_group_names = self.all_group.all_groups.keys()
-        for offset in xrange(0, len(all_group_names), self._batch_size):
+        all_group_names = list(self.all_group.all_groups.keys())
+        for offset in range(0, len(all_group_names), self._batch_size):
             group_names = all_group_names[offset:(offset + self._batch_size)]
             for group_pk in groups_qs.filter(name__in=group_names).values_list('pk', flat=True):
                 del_group_pks.discard(group_pk)
@@ -521,13 +504,13 @@ class Command(BaseCommand):
             del_group_pks.discard(self.inventory_source.deprecated_group_id)
         # Now delete all remaining groups in batches.
         all_del_pks = sorted(list(del_group_pks))
-        for offset in xrange(0, len(all_del_pks), self._batch_size):
+        for offset in range(0, len(all_del_pks), self._batch_size):
             del_pks = all_del_pks[offset:(offset + self._batch_size)]
             for group in groups_qs.filter(pk__in=del_pks):
                 group_name = group.name
                 with ignore_inventory_computed_fields():
                     group.delete()
-                logger.info('Group "%s" deleted', group_name)
+                logger.debug('Group "%s" deleted', group_name)
         if settings.SQL_DEBUG:
             logger.warning('group deletions took %d queries for %d groups',
                            len(connection.queries) - queries_before,
@@ -546,9 +529,13 @@ class Command(BaseCommand):
         group_group_count = 0
         group_host_count = 0
         db_groups = self.inventory_source.groups
+        # Set of all group names managed by this inventory source
+        all_source_group_names = frozenset(self.all_group.all_groups.keys())
+        # Set of all host pks managed by this inventory source
+        all_source_host_pks = self._existing_host_pks()
         for db_group in db_groups.all():
             if self.inventory_source.deprecated_group_id == db_group.id:  # TODO: remove in 3.3
-                logger.info(
+                logger.debug(
                     'Group "%s" from v1 API child group/host connections preserved',
                     db_group.name
                 )
@@ -556,45 +543,61 @@ class Command(BaseCommand):
             # Delete child group relationships not present in imported data.
             db_children = db_group.children
             db_children_name_pk_map = dict(db_children.values_list('name', 'pk'))
+            # Exclude child groups from removal list if they were returned by
+            # the import, because this parent-child relationship has not changed
             mem_children = self.all_group.all_groups[db_group.name].children
             for mem_group in mem_children:
                 db_children_name_pk_map.pop(mem_group.name, None)
+            # Exclude child groups from removal list if they were not imported
+            # by this specific inventory source, because
+            # those relationships are outside of the dominion of this inventory source
+            other_source_group_names = set(db_children_name_pk_map.keys()) - all_source_group_names
+            for group_name in other_source_group_names:
+                db_children_name_pk_map.pop(group_name, None)
+            # Removal list is complete - now perform the removals
             del_child_group_pks = list(set(db_children_name_pk_map.values()))
-            for offset in xrange(0, len(del_child_group_pks), self._batch_size):
+            for offset in range(0, len(del_child_group_pks), self._batch_size):
                 child_group_pks = del_child_group_pks[offset:(offset + self._batch_size)]
                 for db_child in db_children.filter(pk__in=child_group_pks):
                     group_group_count += 1
                     db_group.children.remove(db_child)
-                    logger.info('Group "%s" removed from group "%s"',
-                                db_child.name, db_group.name)
+                    logger.debug('Group "%s" removed from group "%s"',
+                                 db_child.name, db_group.name)
             # FIXME: Inventory source group relationships
             # Delete group/host relationships not present in imported data.
             db_hosts = db_group.hosts
             del_host_pks = set(db_hosts.values_list('pk', flat=True))
+            # Exclude child hosts from removal list if they were not imported
+            # by this specific inventory source, because
+            # those relationships are outside of the dominion of this inventory source
+            del_host_pks = del_host_pks & all_source_host_pks
+            # Exclude child hosts from removal list if they were returned by
+            # the import, because this group-host relationship has not changed
             mem_hosts = self.all_group.all_groups[db_group.name].hosts
             all_mem_host_names = [h.name for h in mem_hosts if not h.instance_id]
-            for offset in xrange(0, len(all_mem_host_names), self._batch_size):
+            for offset in range(0, len(all_mem_host_names), self._batch_size):
                 mem_host_names = all_mem_host_names[offset:(offset + self._batch_size)]
                 for db_host_pk in db_hosts.filter(name__in=mem_host_names).values_list('pk', flat=True):
                     del_host_pks.discard(db_host_pk)
             all_mem_instance_ids = [h.instance_id for h in mem_hosts if h.instance_id]
-            for offset in xrange(0, len(all_mem_instance_ids), self._batch_size):
+            for offset in range(0, len(all_mem_instance_ids), self._batch_size):
                 mem_instance_ids = all_mem_instance_ids[offset:(offset + self._batch_size)]
                 for db_host_pk in db_hosts.filter(instance_id__in=mem_instance_ids).values_list('pk', flat=True):
                     del_host_pks.discard(db_host_pk)
             all_db_host_pks = [v for k,v in self.db_instance_id_map.items() if k in all_mem_instance_ids]
             for db_host_pk in all_db_host_pks:
                 del_host_pks.discard(db_host_pk)
+            # Removal list is complete - now perform the removals
             del_host_pks = list(del_host_pks)
-            for offset in xrange(0, len(del_host_pks), self._batch_size):
+            for offset in range(0, len(del_host_pks), self._batch_size):
                 del_pks = del_host_pks[offset:(offset + self._batch_size)]
                 for db_host in db_hosts.filter(pk__in=del_pks):
                     group_host_count += 1
                     if db_host not in db_group.hosts.all():
                         continue
                     db_group.hosts.remove(db_host)
-                    logger.info('Host "%s" removed from group "%s"',
-                                db_host.name, db_group.name)
+                    logger.debug('Host "%s" removed from group "%s"',
+                                 db_host.name, db_group.name)
         if settings.SQL_DEBUG:
             logger.warning('group-group and group-host deletions took %d queries for %d relationships',
                            len(connection.queries) - queries_before,
@@ -613,9 +616,9 @@ class Command(BaseCommand):
         if db_variables != all_obj.variables_dict:
             all_obj.variables = json.dumps(db_variables)
             all_obj.save(update_fields=['variables'])
-            logger.info('Inventory variables updated from "all" group')
+            logger.debug('Inventory variables updated from "all" group')
         else:
-            logger.info('Inventory variables unmodified')
+            logger.debug('Inventory variables unmodified')
 
     def _create_update_groups(self):
         '''
@@ -634,7 +637,7 @@ class Command(BaseCommand):
             if len(v.parents) == 1 and v.parents[0].name == 'all':
                 root_group_names.add(k)
         existing_group_names = set()
-        for offset in xrange(0, len(all_group_names), self._batch_size):
+        for offset in range(0, len(all_group_names), self._batch_size):
             group_names = all_group_names[offset:(offset + self._batch_size)]
             for group in self.inventory.groups.filter(name__in=group_names):
                 mem_group = self.all_group.all_groups[group.name]
@@ -647,11 +650,11 @@ class Command(BaseCommand):
                     group.variables = json.dumps(db_variables)
                     group.save(update_fields=['variables'])
                     if self.overwrite_vars:
-                        logger.info('Group "%s" variables replaced', group.name)
+                        logger.debug('Group "%s" variables replaced', group.name)
                     else:
-                        logger.info('Group "%s" variables updated', group.name)
+                        logger.debug('Group "%s" variables updated', group.name)
                 else:
-                    logger.info('Group "%s" variables unmodified', group.name)
+                    logger.debug('Group "%s" variables unmodified', group.name)
                 existing_group_names.add(group.name)
                 self._batch_add_m2m(self.inventory_source.groups, group)
         for group_name in all_group_names:
@@ -665,7 +668,7 @@ class Command(BaseCommand):
                     'description':'imported'
                 }
             )[0]
-            logger.info('Group "%s" added', group.name)
+            logger.debug('Group "%s" added', group.name)
             self._batch_add_m2m(self.inventory_source.groups, group)
         self._batch_add_m2m(self.inventory_source.groups, flush=True)
         if settings.SQL_DEBUG:
@@ -704,24 +707,24 @@ class Command(BaseCommand):
         if update_fields:
             db_host.save(update_fields=update_fields)
         if 'name' in update_fields:
-            logger.info('Host renamed from "%s" to "%s"', old_name, mem_host.name)
+            logger.debug('Host renamed from "%s" to "%s"', old_name, mem_host.name)
         if 'instance_id' in update_fields:
             if old_instance_id:
-                logger.info('Host "%s" instance_id updated', mem_host.name)
+                logger.debug('Host "%s" instance_id updated', mem_host.name)
             else:
-                logger.info('Host "%s" instance_id added', mem_host.name)
+                logger.debug('Host "%s" instance_id added', mem_host.name)
         if 'variables' in update_fields:
             if self.overwrite_vars:
-                logger.info('Host "%s" variables replaced', mem_host.name)
+                logger.debug('Host "%s" variables replaced', mem_host.name)
             else:
-                logger.info('Host "%s" variables updated', mem_host.name)
+                logger.debug('Host "%s" variables updated', mem_host.name)
         else:
-            logger.info('Host "%s" variables unmodified', mem_host.name)
+            logger.debug('Host "%s" variables unmodified', mem_host.name)
         if 'enabled' in update_fields:
             if enabled:
-                logger.info('Host "%s" is now enabled', mem_host.name)
+                logger.debug('Host "%s" is now enabled', mem_host.name)
             else:
-                logger.info('Host "%s" is now disabled', mem_host.name)
+                logger.debug('Host "%s" is now disabled', mem_host.name)
         self._batch_add_m2m(self.inventory_source.hosts, db_host)
 
     def _create_update_hosts(self):
@@ -738,7 +741,7 @@ class Command(BaseCommand):
         mem_host_instance_id_map = {}
         mem_host_name_map = {}
         mem_host_names_to_update = set(self.all_group.all_hosts.keys())
-        for k,v in self.all_group.all_hosts.iteritems():
+        for k,v in self.all_group.all_hosts.items():
             mem_host_name_map[k] = v
             instance_id = self._get_instance_id(v.variables)
             if instance_id in self.db_instance_id_map:
@@ -748,7 +751,7 @@ class Command(BaseCommand):
 
         # Update all existing hosts where we know the PK based on instance_id.
         all_host_pks = sorted(mem_host_pk_map.keys())
-        for offset in xrange(0, len(all_host_pks), self._batch_size):
+        for offset in range(0, len(all_host_pks), self._batch_size):
             host_pks = all_host_pks[offset:(offset + self._batch_size)]
             for db_host in self.inventory.hosts.filter( pk__in=host_pks):
                 if db_host.pk in host_pks_updated:
@@ -760,7 +763,7 @@ class Command(BaseCommand):
 
         # Update all existing hosts where we know the instance_id.
         all_instance_ids = sorted(mem_host_instance_id_map.keys())
-        for offset in xrange(0, len(all_instance_ids), self._batch_size):
+        for offset in range(0, len(all_instance_ids), self._batch_size):
             instance_ids = all_instance_ids[offset:(offset + self._batch_size)]
             for db_host in self.inventory.hosts.filter( instance_id__in=instance_ids):
                 if db_host.pk in host_pks_updated:
@@ -772,7 +775,7 @@ class Command(BaseCommand):
 
         # Update all existing hosts by name.
         all_host_names = sorted(mem_host_name_map.keys())
-        for offset in xrange(0, len(all_host_names), self._batch_size):
+        for offset in range(0, len(all_host_names), self._batch_size):
             host_names = all_host_names[offset:(offset + self._batch_size)]
             for db_host in self.inventory.hosts.filter( name__in=host_names):
                 if db_host.pk in host_pks_updated:
@@ -793,11 +796,15 @@ class Command(BaseCommand):
             if self.instance_id_var:
                 instance_id = self._get_instance_id(mem_host.variables)
                 host_attrs['instance_id'] = instance_id
+            try:
+                sanitize_jinja(mem_host_name)
+            except ValueError as e:
+                raise ValueError(str(e) + ': {}'.format(mem_host_name))
             db_host = self.inventory.hosts.update_or_create(name=mem_host_name, defaults=host_attrs)[0]
             if enabled is False:
-                logger.info('Host "%s" added (disabled)', mem_host_name)
+                logger.debug('Host "%s" added (disabled)', mem_host_name)
             else:
-                logger.info('Host "%s" added', mem_host_name)
+                logger.debug('Host "%s" added', mem_host_name)
             self._batch_add_m2m(self.inventory_source.hosts, db_host)
 
         self._batch_add_m2m(self.inventory_source.hosts, flush=True)
@@ -814,22 +821,22 @@ class Command(BaseCommand):
         '''
         if settings.SQL_DEBUG:
             queries_before = len(connection.queries)
-        all_group_names = sorted([k for k,v in self.all_group.all_groups.iteritems() if v.children])
+        all_group_names = sorted([k for k,v in self.all_group.all_groups.items() if v.children])
         group_group_count = 0
-        for offset in xrange(0, len(all_group_names), self._batch_size):
+        for offset in range(0, len(all_group_names), self._batch_size):
             group_names = all_group_names[offset:(offset + self._batch_size)]
             for db_group in self.inventory.groups.filter(name__in=group_names):
                 mem_group = self.all_group.all_groups[db_group.name]
                 group_group_count += len(mem_group.children)
                 all_child_names = sorted([g.name for g in mem_group.children])
-                for offset2 in xrange(0, len(all_child_names), self._batch_size):
+                for offset2 in range(0, len(all_child_names), self._batch_size):
                     child_names = all_child_names[offset2:(offset2 + self._batch_size)]
                     db_children_qs = self.inventory.groups.filter(name__in=child_names)
                     for db_child in db_children_qs.filter(children__id=db_group.id):
-                        logger.info('Group "%s" already child of group "%s"', db_child.name, db_group.name)
+                        logger.debug('Group "%s" already child of group "%s"', db_child.name, db_group.name)
                     for db_child in db_children_qs.exclude(children__id=db_group.id):
                         self._batch_add_m2m(db_group.children, db_child)
-                    logger.info('Group "%s" added as child of "%s"', db_child.name, db_group.name)
+                    logger.debug('Group "%s" added as child of "%s"', db_child.name, db_group.name)
                 self._batch_add_m2m(db_group.children, flush=True)
         if settings.SQL_DEBUG:
             logger.warning('Group-group updates took %d queries for %d group-group relationships',
@@ -841,31 +848,31 @@ class Command(BaseCommand):
         # belongs.
         if settings.SQL_DEBUG:
             queries_before = len(connection.queries)
-        all_group_names = sorted([k for k,v in self.all_group.all_groups.iteritems() if v.hosts])
+        all_group_names = sorted([k for k,v in self.all_group.all_groups.items() if v.hosts])
         group_host_count = 0
-        for offset in xrange(0, len(all_group_names), self._batch_size):
+        for offset in range(0, len(all_group_names), self._batch_size):
             group_names = all_group_names[offset:(offset + self._batch_size)]
             for db_group in self.inventory.groups.filter(name__in=group_names):
                 mem_group = self.all_group.all_groups[db_group.name]
                 group_host_count += len(mem_group.hosts)
                 all_host_names = sorted([h.name for h in mem_group.hosts if not h.instance_id])
-                for offset2 in xrange(0, len(all_host_names), self._batch_size):
+                for offset2 in range(0, len(all_host_names), self._batch_size):
                     host_names = all_host_names[offset2:(offset2 + self._batch_size)]
                     db_hosts_qs = self.inventory.hosts.filter(name__in=host_names)
                     for db_host in db_hosts_qs.filter(groups__id=db_group.id):
-                        logger.info('Host "%s" already in group "%s"', db_host.name, db_group.name)
+                        logger.debug('Host "%s" already in group "%s"', db_host.name, db_group.name)
                     for db_host in db_hosts_qs.exclude(groups__id=db_group.id):
                         self._batch_add_m2m(db_group.hosts, db_host)
-                        logger.info('Host "%s" added to group "%s"', db_host.name, db_group.name)
+                        logger.debug('Host "%s" added to group "%s"', db_host.name, db_group.name)
                 all_instance_ids = sorted([h.instance_id for h in mem_group.hosts if h.instance_id])
-                for offset2 in xrange(0, len(all_instance_ids), self._batch_size):
+                for offset2 in range(0, len(all_instance_ids), self._batch_size):
                     instance_ids = all_instance_ids[offset2:(offset2 + self._batch_size)]
                     db_hosts_qs = self.inventory.hosts.filter(instance_id__in=instance_ids)
                     for db_host in db_hosts_qs.filter(groups__id=db_group.id):
-                        logger.info('Host "%s" already in group "%s"', db_host.name, db_group.name)
+                        logger.debug('Host "%s" already in group "%s"', db_host.name, db_group.name)
                     for db_host in db_hosts_qs.exclude(groups__id=db_group.id):
                         self._batch_add_m2m(db_group.hosts, db_host)
-                        logger.info('Host "%s" added to group "%s"', db_host.name, db_group.name)
+                        logger.debug('Host "%s" added to group "%s"', db_host.name, db_group.name)
                 self._batch_add_m2m(db_group.hosts, flush=True)
         if settings.SQL_DEBUG:
             logger.warning('Group-host updates took %d queries for %d group-host relationships',
@@ -876,55 +883,97 @@ class Command(BaseCommand):
         Load inventory from in-memory groups to the database, overwriting or
         merging as appropriate.
         '''
-        # FIXME: Attribute changes to superuser?
-        # Perform __in queries in batches (mainly for unit tests using SQLite).
-        self._batch_size = 500
-        self._build_db_instance_id_map()
-        self._build_mem_instance_id_map()
-        if self.overwrite:
-            self._delete_hosts()
-            self._delete_groups()
-            self._delete_group_children_and_hosts()
-        self._update_inventory()
-        self._create_update_groups()
-        self._create_update_hosts()
-        self._create_update_group_children()
-        self._create_update_group_hosts()
+        with advisory_lock('inventory_{}_update'.format(self.inventory.id)):
+            # FIXME: Attribute changes to superuser?
+            # Perform __in queries in batches (mainly for unit tests using SQLite).
+            self._batch_size = 500
+            self._build_db_instance_id_map()
+            self._build_mem_instance_id_map()
+            if self.overwrite:
+                self._delete_hosts()
+                self._delete_groups()
+                self._delete_group_children_and_hosts()
+            self._update_inventory()
+            self._create_update_groups()
+            self._create_update_hosts()
+            self._create_update_group_children()
+            self._create_update_group_hosts()
+
+    def remote_tower_license_compare(self, local_license_type):
+        # this requires https://github.com/ansible/ansible/pull/52747
+        source_vars = self.all_group.variables
+        remote_license_type = source_vars.get('tower_metadata', {}).get('license_type', None)
+        if remote_license_type is None:
+            raise CommandError('Unexpected Error: Tower inventory plugin missing needed metadata!')
+        if local_license_type != remote_license_type:
+            raise CommandError('Tower server licenses must match: source: {} local: {}'.format(
+                remote_license_type, local_license_type
+            ))
 
     def check_license(self):
         license_info = get_licenser().validate()
+        local_license_type = license_info.get('license_type', 'UNLICENSED')
         if license_info.get('license_key', 'UNLICENSED') == 'UNLICENSED':
             logger.error(LICENSE_NON_EXISTANT_MESSAGE)
             raise CommandError('No license found!')
-        elif license_info.get('license_type', 'UNLICENSED') == 'open':
+        elif local_license_type == 'open':
             return
         available_instances = license_info.get('available_instances', 0)
         free_instances = license_info.get('free_instances', 0)
         time_remaining = license_info.get('time_remaining', 0)
+        hard_error = license_info.get('trial', False) is True or license_info['instance_count'] == 10
         new_count = Host.objects.active_count()
-        if time_remaining <= 0 and not license_info.get('demo', False):
-            logger.error(LICENSE_EXPIRED_MESSAGE)
-            raise CommandError("License has expired!")
+        if time_remaining <= 0:
+            if hard_error:
+                logger.error(LICENSE_EXPIRED_MESSAGE)
+                raise CommandError("License has expired!")
+            else:
+                logger.warning(LICENSE_EXPIRED_MESSAGE)
+        # special check for tower-type inventory sources
+        # but only if running the plugin
+        TOWER_SOURCE_FILES = ['tower.yml', 'tower.yaml']
+        if self.inventory_source.source == 'tower' and any(f in self.source for f in TOWER_SOURCE_FILES):
+            # only if this is the 2nd call to license check, we cannot compare before running plugin
+            if hasattr(self, 'all_group'):
+                self.remote_tower_license_compare(local_license_type)
         if free_instances < 0:
             d = {
                 'new_count': new_count,
                 'available_instances': available_instances,
             }
-            if license_info.get('demo', False):
-                logger.error(DEMO_LICENSE_MESSAGE % d)
-            else:
+            if hard_error:
                 logger.error(LICENSE_MESSAGE % d)
-            raise CommandError('License count exceeded!')
+                raise CommandError('License count exceeded!')
+            else:
+                logger.warning(LICENSE_MESSAGE % d)
+
+    def check_org_host_limit(self):
+        license_info = get_licenser().validate()
+        if license_info.get('license_type', 'UNLICENSED') == 'open':
+            return
+
+        org = self.inventory.organization
+        if org is None or org.max_hosts == 0:
+            return
+
+        active_count = Host.objects.org_active_count(org.id)
+        if active_count > org.max_hosts:
+            raise CommandError('Host limit for organization exceeded!')
 
     def mark_license_failure(self, save=True):
         self.inventory_update.license_error = True
         self.inventory_update.save(update_fields=['license_error'])
+
+    def mark_org_limits_failure(self, save=True):
+        self.inventory_update.org_host_limit_error = True
+        self.inventory_update.save(update_fields=['org_host_limit_error'])
 
     def handle(self, *args, **options):
         self.verbosity = int(options.get('verbosity', 1))
         self.set_logging_level()
         self.inventory_name = options.get('inventory_name', None)
         self.inventory_id = options.get('inventory_id', None)
+        venv_path = options.get('venv', None)
         self.overwrite = bool(options.get('overwrite', False))
         self.overwrite_vars = bool(options.get('overwrite_vars', False))
         self.keep_vars = bool(options.get('keep_vars', False))
@@ -937,7 +986,7 @@ class Command(BaseCommand):
         self.exclude_empty_groups = bool(options.get('exclude_empty_groups', False))
         self.instance_id_var = options.get('instance_id_var', None)
 
-        self.celery_invoked = False if os.getenv('INVENTORY_SOURCE_ID', None) is None else True
+        self.invoked_from_dispatcher = False if os.getenv('INVENTORY_SOURCE_ID', None) is None else True
 
         # Load inventory and related objects from database.
         if self.inventory_name and self.inventory_id:
@@ -957,12 +1006,6 @@ class Command(BaseCommand):
         except re.error:
             raise CommandError('invalid regular expression for --host-filter')
 
-        '''
-        TODO: Remove this deprecation when we remove support for rax.py
-        '''
-        if self.source == "rax.py":
-            logger.info("Rackspace inventory sync is Deprecated in Tower 3.1.0 and support for Rackspace will be removed in a future release.")
-
         begin = time.time()
         self.load_inventory_from_database()
 
@@ -970,6 +1013,13 @@ class Command(BaseCommand):
             self.check_license()
         except CommandError as e:
             self.mark_license_failure(save=True)
+            raise e
+
+        try:
+            # Check the per-org host limits
+            self.check_org_host_limit()
+        except CommandError as e:
+            self.mark_org_limits_failure(save=True)
             raise e
 
         status, tb, exc = 'error', '', None
@@ -985,12 +1035,27 @@ class Command(BaseCommand):
                         self.inventory_update.status = 'running'
                         self.inventory_update.save()
 
-            # Load inventory from source.
-            self.all_group = load_inventory_source(self.source,
-                                                   self.group_filter_re,
-                                                   self.host_filter_re,
-                                                   self.exclude_empty_groups,
-                                                   self.is_custom)
+            source = self.get_source_absolute_path(self.source)
+
+            data = AnsibleInventoryLoader(source=source, is_custom=self.is_custom,
+                                          venv_path=venv_path, verbosity=self.verbosity).load()
+
+            logger.debug('Finished loading from source: %s', source)
+            logger.info('Processing JSON output...')
+            inventory = MemInventory(
+                group_filter_re=self.group_filter_re, host_filter_re=self.host_filter_re)
+            inventory = dict_to_mem_data(data, inventory=inventory)
+
+            del data  # forget dict from import, could be large
+
+            logger.info('Loaded %d groups, %d hosts', len(inventory.all_group.all_groups),
+                        len(inventory.all_group.all_hosts))
+
+            if self.exclude_empty_groups:
+                inventory.delete_empty_groups()
+
+            self.all_group = inventory.all_group
+
             if settings.DEBUG:
                 # depending on inventory source, this output can be
                 # *exceedingly* verbose - crawling a deeply nested
@@ -1004,37 +1069,51 @@ class Command(BaseCommand):
                 self.all_group.debug_tree()
 
             with batch_role_ancestor_rebuilding():
-                # Ensure that this is managed as an atomic SQL transaction,
-                # and thus properly rolled back if there is an issue.
-                with transaction.atomic():
-                    # Merge/overwrite inventory into database.
-                    if settings.SQL_DEBUG:
-                        logger.warning('loading into database...')
-                    with ignore_inventory_computed_fields():
-                        if getattr(settings, 'ACTIVITY_STREAM_ENABLED_FOR_INVENTORY_SYNC', True):
-                            self.load_into_database()
-                        else:
-                            with disable_activity_stream():
+                # If using with transaction.atomic() with try ... catch,
+                # with transaction.atomic() must be inside the try section of the code as per Django docs
+                try:
+                    # Ensure that this is managed as an atomic SQL transaction,
+                    # and thus properly rolled back if there is an issue.
+                    with transaction.atomic():
+                        # Merge/overwrite inventory into database.
+                        if settings.SQL_DEBUG:
+                            logger.warning('loading into database...')
+                        with ignore_inventory_computed_fields():
+                            if getattr(settings, 'ACTIVITY_STREAM_ENABLED_FOR_INVENTORY_SYNC', True):
                                 self.load_into_database()
-                        if settings.SQL_DEBUG:
-                            queries_before2 = len(connection.queries)
-                        self.inventory.update_computed_fields()
-                        if settings.SQL_DEBUG:
-                            logger.warning('update computed fields took %d queries',
-                                           len(connection.queries) - queries_before2)
-                    try:
+                            else:
+                                with disable_activity_stream():
+                                    self.load_into_database()
+                            if settings.SQL_DEBUG:
+                                queries_before2 = len(connection.queries)
+                            self.inventory.update_computed_fields()
+                            if settings.SQL_DEBUG:
+                                logger.warning('update computed fields took %d queries',
+                                               len(connection.queries) - queries_before2)
+                        # Check if the license is valid. 
+                        # If the license is not valid, a CommandError will be thrown,
+                        # and inventory update will be marked as invalid.
+                        # with transaction.atomic() will roll back the changes.
+                        license_fail = True
                         self.check_license()
-                    except CommandError as e:
-                        self.mark_license_failure(save=True)
-                        raise e
 
-                    if settings.SQL_DEBUG:
-                        logger.warning('Inventory import completed for %s in %0.1fs',
-                                       self.inventory_source.name, time.time() - begin)
+                        # Check the per-org host limits
+                        license_fail = False
+                        self.check_org_host_limit()
+                except CommandError as e:
+                    if license_fail:
+                        self.mark_license_failure()
                     else:
-                        logger.info('Inventory import completed for %s in %0.1fs',
-                                    self.inventory_source.name, time.time() - begin)
-                    status = 'successful'
+                        self.mark_org_limits_failure()
+                    raise e
+
+                if settings.SQL_DEBUG:
+                    logger.warning('Inventory import completed for %s in %0.1fs',
+                                   self.inventory_source.name, time.time() - begin)
+                else:
+                    logger.info('Inventory import completed for %s in %0.1fs',
+                                self.inventory_source.name, time.time() - begin)
+                status = 'successful'
 
             # If we're in debug mode, then log the queries and time
             # used to do the operation.
@@ -1053,16 +1132,20 @@ class Command(BaseCommand):
             else:
                 tb = traceback.format_exc()
                 exc = e
-            transaction.rollback()
 
-        if self.celery_invoked is False:
+        if not self.invoked_from_dispatcher:
             with ignore_inventory_computed_fields():
                 self.inventory_update = InventoryUpdate.objects.get(pk=self.inventory_update.pk)
                 self.inventory_update.result_traceback = tb
                 self.inventory_update.status = status
                 self.inventory_update.save(update_fields=['status', 'result_traceback'])
+                self.inventory_source.status = status
+                self.inventory_source.save(update_fields=['status'])
 
-        if exc and isinstance(exc, CommandError):
-            sys.exit(1)
-        elif exc:
-            raise
+            if exc:
+                logger.error(str(exc))
+
+        if exc:
+            if isinstance(exc, CommandError):
+                sys.exit(1)
+            raise exc

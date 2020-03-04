@@ -1,13 +1,16 @@
 # Copyright (c) 2017 Ansible Tower by Red Hat
 # All Rights Reserved.
 
-from logstash.formatter import LogstashFormatterVersion1
 from copy import copy
 import json
 import time
 import logging
+import traceback
+import socket
+from datetime import datetime
 
-import six
+
+from django.conf import settings
 
 
 class TimeFormatter(logging.Formatter):
@@ -19,16 +22,101 @@ class TimeFormatter(logging.Formatter):
         return logging.Formatter.format(self, record)
 
 
-class LogstashFormatter(LogstashFormatterVersion1):
-    def __init__(self, **kwargs):
-        settings_module = kwargs.pop('settings_module', None)
-        ret = super(LogstashFormatter, self).__init__(**kwargs)
-        if settings_module:
-            self.host_id = getattr(settings_module, 'CLUSTER_HOST_ID', None)
-            if hasattr(settings_module, 'LOG_AGGREGATOR_TOWER_UUID'):
-                self.tower_uuid = settings_module.LOG_AGGREGATOR_TOWER_UUID
-            self.message_type = getattr(settings_module, 'LOG_AGGREGATOR_TYPE', 'other')
-        return ret
+class LogstashFormatterBase(logging.Formatter):
+    """Base class taken from python-logstash=0.4.6
+    modified here since that version
+
+    For compliance purposes, this was the license at the point of divergence:
+
+    The MIT License (MIT)
+
+    Copyright (c) 2013, Volodymyr Klochan
+
+    Permission is hereby granted, free of charge, to any person obtaining a copy
+    of this software and associated documentation files (the "Software"), to deal
+    in the Software without restriction, including without limitation the rights
+    to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+    copies of the Software, and to permit persons to whom the Software is
+    furnished to do so, subject to the following conditions:
+
+    The above copyright notice and this permission notice shall be included in
+    all copies or substantial portions of the Software.
+
+    THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+    IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+    FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+    AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+    LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+    OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
+    THE SOFTWARE.
+    """
+
+    def __init__(self, message_type='Logstash', fqdn=False):
+        self.message_type = message_type
+
+        if fqdn:
+            self.host = socket.getfqdn()
+        else:
+            self.host = socket.gethostname()
+
+    def get_extra_fields(self, record):
+        # The list contains all the attributes listed in
+        # http://docs.python.org/library/logging.html#logrecord-attributes
+        skip_list = (
+            'args', 'asctime', 'created', 'exc_info', 'exc_text', 'filename',
+            'funcName', 'id', 'levelname', 'levelno', 'lineno', 'module',
+            'msecs', 'msecs', 'message', 'msg', 'name', 'pathname', 'process',
+            'processName', 'relativeCreated', 'thread', 'threadName', 'extra')
+
+        easy_types = (str, bool, dict, float, int, list, type(None))
+
+        fields = {}
+
+        for key, value in record.__dict__.items():
+            if key not in skip_list:
+                if isinstance(value, easy_types):
+                    fields[key] = value
+                else:
+                    fields[key] = repr(value)
+
+        return fields
+
+    def get_debug_fields(self, record):
+        return {
+            'stack_trace': self.format_exception(record.exc_info),
+            'lineno': record.lineno,
+            'process': record.process,
+            'thread_name': record.threadName,
+            'funcName': record.funcName,
+            'processName': record.processName,
+        }
+
+    @classmethod
+    def format_timestamp(cls, time):
+        tstamp = datetime.utcfromtimestamp(time)
+        return tstamp.strftime("%Y-%m-%dT%H:%M:%S") + ".%03d" % (tstamp.microsecond / 1000) + "Z"
+
+    @classmethod
+    def format_exception(cls, exc_info):
+        return ''.join(traceback.format_exception(*exc_info)) if exc_info else ''
+
+    @classmethod
+    def serialize(cls, message):
+        return bytes(json.dumps(message), 'utf-8')
+
+
+class LogstashFormatter(LogstashFormatterBase):
+
+    def __init__(self, *args, **kwargs):
+        self.cluster_host_id = settings.CLUSTER_HOST_ID
+        self.tower_uuid = None
+        uuid = (
+            getattr(settings, 'LOG_AGGREGATOR_TOWER_UUID', None) or
+            getattr(settings, 'INSTALL_UUID', None)
+        )
+        if uuid:
+            self.tower_uuid = uuid
+        super(LogstashFormatter, self).__init__(*args, **kwargs)
 
     def reformat_data_for_log(self, raw_data, kind=None):
         '''
@@ -38,45 +126,18 @@ class LogstashFormatter(LogstashFormatterVersion1):
         to the logging receiver
         '''
         if kind == 'activity_stream':
+            try:
+                raw_data['changes'] = json.loads(raw_data.get('changes', '{}'))
+            except Exception:
+                pass  # best effort here, if it's not valid JSON, then meh
             return raw_data
         elif kind == 'system_tracking':
             data = copy(raw_data['ansible_facts'])
         else:
             data = copy(raw_data)
-        if isinstance(data, six.string_types):
+        if isinstance(data, str):
             data = json.loads(data)
         data_for_log = {}
-
-        def index_by_name(alist):
-            """Takes a list of dictionaries with `name` as a key in each dict
-            and returns a dictionary indexed by those names"""
-            adict = {}
-            for item in alist:
-                subdict = copy(item)
-                if 'name' in subdict:
-                    name = subdict.get('name', None)
-                elif 'path' in subdict:
-                    name = subdict.get('path', None)
-                if name:
-                    # Logstash v2 can not accept '.' in a name
-                    name = name.replace('.', '_')
-                    adict[name] = subdict
-            return adict
-
-        def convert_to_type(t, val):
-            if t is float:
-                val = val[:-1] if val.endswith('s') else val
-                try:
-                    return float(val)
-                except ValueError:
-                    return val
-            elif t is int:
-                try:
-                    return int(val)
-                except ValueError:
-                    return val
-            elif t is str:
-                return val
 
         if kind == 'job_events':
             job_event = raw_data['python_objects']['job_event']
@@ -103,6 +164,8 @@ class LogstashFormatter(LogstashFormatterVersion1):
                     data_for_log[key] = 'Exception `{}` producing field'.format(e)
 
             data_for_log['event_display'] = job_event.get_event_display2()
+            if hasattr(job_event, 'workflow_job_id'):
+                data_for_log['workflow_job_id'] = job_event.workflow_job_id
 
         elif kind == 'system_tracking':
             data.pop('ansible_python_version', None)
@@ -115,6 +178,21 @@ class LogstashFormatter(LogstashFormatterVersion1):
             data_for_log['host_name'] = raw_data['host_name']
             data_for_log['job_id'] = raw_data['job_id']
         elif kind == 'performance':
+            def convert_to_type(t, val):
+                if t is float:
+                    val = val[:-1] if val.endswith('s') else val
+                    try:
+                        return float(val)
+                    except ValueError:
+                        return val
+                elif t is int:
+                    try:
+                        return int(val)
+                    except ValueError:
+                        return val
+                elif t is str:
+                    return val
+
             request = raw_data['python_objects']['request']
             response = raw_data['python_objects']['response']
 
@@ -147,28 +225,23 @@ class LogstashFormatter(LogstashFormatterVersion1):
         if record.name.startswith('awx.analytics'):
             log_kind = record.name[len('awx.analytics.'):]
             fields = self.reformat_data_for_log(fields, kind=log_kind)
+        # General AWX metadata
+        fields['cluster_host_id'] = self.cluster_host_id
+        fields['tower_uuid'] = self.tower_uuid
         return fields
 
     def format(self, record):
         message = {
-            # Fields not included, but exist in related logs
+            # Field not included, but exist in related logs
             # 'path': record.pathname
-            # '@version': '1', # from python-logstash
-            # 'tags': self.tags,
             '@timestamp': self.format_timestamp(record.created),
             'message': record.getMessage(),
             'host': self.host,
-            'type': self.message_type,
 
             # Extra Fields
             'level': record.levelname,
             'logger_name': record.name,
         }
-
-        if getattr(self, 'tower_uuid', None):
-            message['tower_uuid'] = self.tower_uuid
-        if getattr(self, 'host_id', None):
-            message['cluster_host_id'] = self.host_id
 
         # Add extra fields
         message.update(self.get_extra_fields(record))

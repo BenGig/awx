@@ -1,9 +1,6 @@
 # Copyright (c) 2018 Ansible by Red Hat
 # All Rights Reserved.
 
-# Celery does not respect exception type when using a serializer different than pickle;
-# and awx uses the json serializer
-# https://github.com/celery/celery/issues/3586
 
 
 class _AwxTaskError():
@@ -33,5 +30,3 @@ class _AwxTaskError():
 
 
 AwxTaskError = _AwxTaskError()
-
-

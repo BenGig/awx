@@ -16,24 +16,13 @@
         multiSelect: true,
         trackBy: 'nested_group.id',
         basePath:  'api/v2/groups/{{$stateParams.group_id}}/children/',
-
+        layoutClass: 'List-staticColumnLayout--groups',
         fields: {
-            failed_hosts: {
-                label: '',
-                nosort: true,
-                mode: 'all',
-                iconOnly: true,
-                awToolTip: "{{ nested_group.hosts_status_tip }}",
-                dataPlacement: "top",
-                icon: "{{ 'fa icon-job-' + nested_group.hosts_status_class }}",
-                columnClass: 'status-column List-staticColumn--smallStatus'
-            },
             name: {
                 label: i18n._('Groups'),
                 key: true,
-                uiSref: "inventories.edit.groups.edit.nested_groups({group_id:nested_group.id)}",
+                uiSref: "inventories.edit.groups.edit({group_id:nested_group.id})",
                 columnClass: 'col-lg-6 col-md-6 col-sm-6 col-xs-6',
-                class: 'InventoryManage-breakWord',
             }
         },
 
@@ -67,8 +56,8 @@
                 mode: 'all',
                 type: 'buttonDropdown',
                 awToolTip: i18n._("Add a group"),
-                actionClass: 'btn List-buttonSubmit',
-                buttonContent: '&#43; ' + i18n._('ADD'),
+                actionClass: 'at-Button--add',
+                actionId: 'button-add',
                 ngShow: 'canAdd',
                 dataPlacement: "top",
                 options: [

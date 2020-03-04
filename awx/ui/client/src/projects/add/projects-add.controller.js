@@ -7,10 +7,10 @@
 export default ['$scope', '$location', '$stateParams', 'GenerateForm',
     'ProjectsForm', 'Rest', 'Alert', 'ProcessErrors', 'GetBasePath',
     'GetProjectPath', 'GetChoices', 'Wait', '$state', 'CreateSelect2', 'i18n',
-    'CredentialTypes', 'ConfigData',
+    'ConfigData', 'resolvedModels', 'scmCredentialType', 'insightsCredentialType',
     function($scope, $location, $stateParams, GenerateForm, ProjectsForm, Rest,
     Alert, ProcessErrors, GetBasePath, GetProjectPath, GetChoices, Wait, $state,
-    CreateSelect2, i18n, CredentialTypes, ConfigData) {
+    CreateSelect2, i18n, ConfigData, resolvedModels, scmCredentialType, insightsCredentialType) {
 
         let form = ProjectsForm(),
             base = $location.path().replace(/^\//, '').split('/')[0],
@@ -21,7 +21,11 @@ export default ['$scope', '$location', '$stateParams', 'GenerateForm',
 
         function init() {
             $scope.canEditOrg = true;
-            $scope.custom_virtualenvs_options = ConfigData.custom_virtualenvs;
+            const virtualEnvs = ConfigData.custom_virtualenvs || [];
+            $scope.custom_virtualenvs_options = virtualEnvs;
+            
+            const [ProjectModel] = resolvedModels;
+            $scope.canAdd = ProjectModel.options('actions.POST');
 
             Rest.setUrl(GetBasePath('projects'));
             Rest.options()
@@ -124,6 +128,7 @@ export default ['$scope', '$location', '$stateParams', 'GenerateForm',
                 $scope.pathRequired = ($scope.scm_type.value === 'manual') ? true : false;
                 $scope.scmRequired = ($scope.scm_type.value !== 'manual') ? true : false;
                 $scope.scmBranchLabel = i18n._('SCM Branch');
+                $scope.scmRefspecLabel = i18n._('SCM Refspec');
                 // Dynamically update popover values
                 if ($scope.scm_type.value) {
                     if(($scope.lookupType === 'insights_credential' && $scope.scm_type.value !== 'insights') || ($scope.lookupType === 'scm_credential' && $scope.scm_type.value === 'insights')) {
@@ -132,7 +137,7 @@ export default ['$scope', '$location', '$stateParams', 'GenerateForm',
                     }
                     switch ($scope.scm_type.value) {
                         case 'git':
-                            $scope.credentialLabel = "SCM Credential";
+                            $scope.credentialLabel = "SCM " + i18n._("Credential");
                             $scope.urlPopover = '<p>' +
                                 i18n._('Example URLs for GIT SCM include:') +
                                 '</p><ul class=\"no-bullets\"><li>https://github.com/ansible/ansible.git</li>' +
@@ -145,7 +150,7 @@ export default ['$scope', '$location', '$stateParams', 'GenerateForm',
                             $scope.scmBranchLabel = i18n._('SCM Branch/Tag/Commit');
                             break;
                         case 'svn':
-                            $scope.credentialLabel = "SCM Credential";
+                            $scope.credentialLabel = "SCM " + i18n._("Credential");
                             $scope.urlPopover = '<p>' + i18n._('Example URLs for Subversion SCM include:') + '</p>' +
                                 '<ul class=\"no-bullets\"><li>https://github.com/ansible/ansible</li><li>svn://servername.example.com/path</li>' +
                                 '<li>svn+ssh://servername.example.com/path</li></ul>';
@@ -154,7 +159,7 @@ export default ['$scope', '$location', '$stateParams', 'GenerateForm',
                             $scope.scmBranchLabel = i18n._('Revision #');
                             break;
                         case 'hg':
-                            $scope.credentialLabel = "SCM Credential";
+                            $scope.credentialLabel = "SCM " + i18n._("Credential");
                             $scope.urlPopover = '<p>' + i18n._('Example URLs for Mercurial SCM include:') + '</p>' +
                                 '<ul class=\"no-bullets\"><li>https://bitbucket.org/username/project</li><li>ssh://hg@bitbucket.org/username/project</li>' +
                                 '<li>ssh://server.example.com/path</li></ul>' +
@@ -173,7 +178,7 @@ export default ['$scope', '$location', '$stateParams', 'GenerateForm',
                             $scope.lookupType = 'insights_credential';
                             break;
                         default:
-                            $scope.credentialLabel = "SCM Credential";
+                            $scope.credentialLabel = "SCM " + i18n._("Credential");
                             $scope.urlPopover = '<p> ' + i18n._('URL popover text') + '</p>';
                             $scope.credRequired = false;
                             $scope.lookupType = 'scm_credential';
@@ -187,13 +192,13 @@ export default ['$scope', '$location', '$stateParams', 'GenerateForm',
         $scope.lookupCredential = function(){
             // Perform a lookup on the credential_type. Git, Mercurial, and Subversion
             // all use SCM as their credential type.
-            let credType = _.filter(CredentialTypes, function(credType){
-                return ($scope.scm_type.value !== "insights" && credType.kind === "scm" ||
-                    $scope.scm_type.value === "insights" && credType.kind === "insights");
-            });
+            let lookupCredentialType = scmCredentialType;
+            if ($scope.scm_type.value === 'insights') {
+                lookupCredentialType = insightsCredentialType;
+            }
             $state.go('.credential', {
                 credential_search: {
-                    credential_type: credType[0].id,
+                    credential_type: lookupCredentialType,
                     page_size: '5',
                     page: '1'
                 }

@@ -1,49 +1,66 @@
-function CapacityAdjuster (templateUrl, ProcessErrors, Wait) {
+function CapacityAdjuster (templateUrl, ProcessErrors, Wait, strings) {
     return {
         scope: {
-            state: '='
+            state: '=',
+            disabled: '@'
         },
         templateUrl: templateUrl('instance-groups/capacity-adjuster/capacity-adjuster'),
         restrict: 'E',
         replace: true,
-        link: function(scope) {
+        link: function(scope, el, attrs, controller) {
+            const capacityAdjusterController = controller;
             const adjustment_values = [{
-                label: 'CPU',
+                label: strings.get('capacityAdjuster.CPU'),
                 value: scope.state.cpu_capacity,
             },{
-                label: 'RAM',
+                label: strings.get('capacityAdjuster.RAM'),
                 value: scope.state.mem_capacity
             }];
 
-            scope.min_capacity = _.min(adjustment_values, 'value');
-            scope.max_capacity = _.max(adjustment_values, 'value');
+            scope.min_capacity = _.minBy(adjustment_values, 'value');
+            scope.max_capacity = _.maxBy(adjustment_values, 'value');
 
+            capacityAdjusterController.init();
         },
-        controller: function($http) {
-            const vm = this || {};
+        controller: ['$scope', '$http', 'InstanceGroupsStrings',
+            function($scope, $http, strings) {
+                const vm = this || {};
+                vm.strings = strings;
 
-            vm.slide = (state) => {
-                Wait('start');
-                const data = {
-                    "capacity_adjustment": `${state.capacity_adjustment}`
+                function computeForks () {
+                    $scope.forks = Math.floor($scope.min_capacity.value + ($scope.max_capacity.value - $scope.min_capacity.value) * $scope.state.capacity_adjustment);
+                }
+
+                vm.init = () => {
+                    computeForks();
                 };
-                const req = {
-                    method: 'PUT',
-                    url: state.url,
-                    data
-                };
-                $http(req)
-                    .catch(({data, status}) => {
-                        ProcessErrors(data, status, null, {
-                            hdr: 'Error!',
-                            msg: 'Call failed. Return status: ' + status
+
+                vm.slide = (state) => {
+                    Wait('start');
+
+                    computeForks();
+
+                    const data = {
+                        "capacity_adjustment": `${state.capacity_adjustment}`
+                    };
+                    const req = {
+                        method: 'PUT',
+                        url: state.url,
+                        data
+                    };
+                    $http(req)
+                        .catch(({data, status}) => {
+                            ProcessErrors(data, status, null, {
+                                hdr: 'Error!',
+                                msg: 'Call failed. Return status: ' + status
+                            });
+                        })
+                        .finally(() => {
+                            Wait('stop');
                         });
-                    })
-                    .finally(() => {
-                        Wait('stop');
-                    });
-            };
-        },
+                };
+            }
+        ],
         controllerAs: 'vm'
     };
 }
@@ -51,7 +68,8 @@ function CapacityAdjuster (templateUrl, ProcessErrors, Wait) {
 CapacityAdjuster.$inject = [
     'templateUrl',
     'ProcessErrors',
-    'Wait'
+    'Wait',
+    'InstanceGroupsStrings'
 ];
 
 export default CapacityAdjuster;

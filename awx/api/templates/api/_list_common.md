@@ -54,15 +54,14 @@ within all designated text fields of a model.
 
     ?search=findme
 
-_Added in AWX 1.4_
-
 (_Added in Ansible Tower 3.1.0_) Search across related fields:
 
     ?related__search=findme
 
-Note: If you want to provide more than one search terms, please use multiple
+Note: If you want to provide more than one search term, multiple
 search fields with the same key, like `?related__search=foo&related__search=bar`,
-All search terms with the same key will be ORed together.
+will be ORed together. Terms separated by commas, like `?related__search=foo,bar`
+will be ANDed together.
 
 ## Filtering
 
@@ -83,7 +82,7 @@ To exclude results matching certain criteria, prefix the field parameter with
 
     ?not__field=value
 
-(_Added in AWX 1.4_) By default, all query string filters are AND'ed together, so
+By default, all query string filters are AND'ed together, so
 only the results matching *all* filters will be returned.  To combine results
 matching *any* one of multiple criteria, prefix each query string parameter
 with `or__`:

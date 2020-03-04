@@ -38,7 +38,13 @@ django.setup() # noqa
 from django.db import transaction # noqa
 
 # awx
-from awx.main.models import * # noqa
+from awx.main.models import (  # noqa
+    Credential, CredentialType, Group, Host, Inventory, Job, JobEvent,
+    JobHostSummary, JobTemplate, Label, Organization, PrimordialModel, Project,
+    Team, User, WorkflowJobTemplate, WorkflowJobTemplateNode,
+    batch_role_ancestor_rebuilding,
+)
+
 from awx.main.signals import ( # noqa
     disable_activity_stream,
     disable_computed_fields
@@ -147,14 +153,14 @@ def spread(n, m):
     ret = []
     # At least one in each slot, split up the rest exponentially so the first
     # buckets contain a lot of entries
-    for i in xrange(m):
+    for i in range(m):
         if n > 0:
             ret.append(1)
             n -= 1
         else:
             ret.append(0)
 
-    for i in xrange(m):
+    for i in range(m):
         n_in_this_slot = n // 2
         n-= n_in_this_slot
         ret[i] += n_in_this_slot
@@ -239,7 +245,7 @@ def make_the_data():
 
 
             print('# Creating %d organizations' % n_organizations)
-            for i in xrange(n_organizations):
+            for i in range(n_organizations):
                 sys.stdout.write('\r%d     ' % (i + 1))
                 sys.stdout.flush()
                 org, _ = Organization.objects.get_or_create(name='%s Organization %d' % (prefix, i))
@@ -326,7 +332,7 @@ def make_the_data():
                         name='%s Credential %d User %d' % (prefix, credential_id, user_idx),
                         defaults=dict(created_by=next(creator_gen),
                                       modified_by=next(modifier_gen)),
-                        credential_type=CredentialType.from_v1_kind('ssh')
+                        credential_type=CredentialType.objects.filter(namespace='ssh').first()
                     )
                     credential.admin_role.members.add(user)
                     credentials.append(credential)
@@ -349,7 +355,7 @@ def make_the_data():
                         name='%s Credential %d team %d' % (prefix, credential_id, team_idx),
                         defaults=dict(created_by=next(creator_gen),
                                       modified_by=next(modifier_gen)),
-                        credential_type=CredentialType.from_v1_kind('ssh')
+                        credential_type=CredentialType.objects.filter(namespace='ssh').first()
                     )
                     credential.admin_role.parents.add(team.member_role)
                     credentials.append(credential)
@@ -370,7 +376,7 @@ def make_the_data():
                         organization=org,
                         defaults=dict(
                             created_by=next(creator_gen), modified_by=next(modifier_gen),
-                            scm_url='https://github.com/jlaska/ansible-playbooks.git',
+                            scm_url='https://github.com/ansible/test-playbooks.git',
                             scm_type='git',
                             playbook_files=[
                                 "check.yml", "debug-50.yml", "debug.yml", "debug2.yml",
@@ -690,7 +696,7 @@ def make_the_data():
                     continue
                 # Bulk create in chunks with maximum chunk size
                 MAX_BULK_CREATE = 100
-                for j in range((n / MAX_BULK_CREATE) + 1):
+                for j in range((n // MAX_BULK_CREATE) + 1):
                     n_subgroup = MAX_BULK_CREATE
                     if j == n / MAX_BULK_CREATE:
                         # on final pass, create the remainder

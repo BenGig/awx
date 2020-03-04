@@ -12,12 +12,14 @@ function (i18n) {
 
             obj.email_required = false;
             obj.slack_required = false;
+            obj.grafana_required = false;
             obj.hipchat_required = false;
             obj.pagerduty_required = false;
             obj.irc_required = false;
             obj.twilio_required = false;
             obj.webhook_required = false;
             obj.mattermost_required = false;
+            obj.rocketchat_required = false;
             obj.token_required = false;
             obj.port_required = false;
             obj.password_required = false;
@@ -37,6 +39,9 @@ function (i18n) {
                     obj.token_required = true;
                     obj.channel_required = true;
                     break;
+                case 'grafana':
+                    obj.grafana_required = true;
+                    break;
                 case 'hipchat':
                     obj.tokenLabel = ' ' + i18n._('Token');
                     obj.hipchat_required = true;
@@ -48,9 +53,14 @@ function (i18n) {
                     break;
                 case 'webhook':
                     obj.webhook_required = true;
+                    obj.passwordLabel = ' ' + i18n._('Basic Auth Password');
+                    obj.password_required = false;
                     break;
                 case 'mattermost':
                     obj.mattermost_required = true;
+                    break;
+                case 'rocketchat':
+                    obj.rocketchat_required = true;
                     break;
                 case 'pagerduty':
                     obj.tokenLabel = ' ' + i18n._('API Token');

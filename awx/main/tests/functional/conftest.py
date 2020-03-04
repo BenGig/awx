@@ -1,26 +1,23 @@
 # Python
 import pytest
-import mock
-import json
-import os
-import six
-from datetime import timedelta
-from six.moves import xrange
+from unittest import mock
+import tempfile
+import shutil
+import urllib.parse
+from unittest.mock import PropertyMock
 
 # Django
-from django.core.urlresolvers import resolve
-from django.core.cache import cache
-from django.utils.six.moves.urllib.parse import urlparse
-from django.utils import timezone
+from django.urls import resolve
+from django.http import Http404
+from django.core.handlers.exception import response_for_exception
 from django.contrib.auth.models import User
-from django.conf import settings
 from django.core.serializers.json import DjangoJSONEncoder
-from jsonbfield.fields import JSONField
+from django.db.backends.sqlite3.base import SQLiteCursorWrapper
 
 # AWX
+from awx.main.fields import JSONBField
 from awx.main.models.projects import Project
 from awx.main.models.ha import Instance
-from awx.main.models.fact import Fact
 
 from rest_framework.test import (
     APIRequestFactory,
@@ -45,6 +42,13 @@ from awx.main.models.notifications import (
     NotificationTemplate,
     Notification
 )
+from awx.main.models.events import (
+    JobEvent,
+    AdHocCommandEvent,
+    ProjectUpdateEvent,
+    InventoryUpdateEvent,
+    SystemJobEvent,
+)
 from awx.main.models.workflow import WorkflowJobTemplate
 from awx.main.models.ad_hoc_commands import AdHocCommand
 from awx.main.models.oauth import OAuth2Application as Application
@@ -55,25 +59,6 @@ __SWAGGER_REQUESTS__ = {}
 @pytest.fixture(scope="session")
 def swagger_autogen(requests=__SWAGGER_REQUESTS__):
     return requests
-
-
-@pytest.fixture(autouse=True)
-def clear_cache():
-    '''
-    Clear cache (local memory) for each test to prevent using cached settings.
-    '''
-    cache.clear()
-
-
-@pytest.fixture(scope="session", autouse=True)
-def celery_memory_broker():
-    '''
-    FIXME: Not sure how "far" just setting the BROKER_URL will get us.
-    We may need to incluence CELERY's configuration like we do in the old unit tests (see base.py)
-
-    Allows django signal code to execute without the need for redis
-    '''
-    settings.BROKER_URL='memory://localhost/'
 
 
 @pytest.fixture
@@ -135,6 +120,22 @@ def project_playbooks():
             return obj.playbook_files
     mocked = mock.patch.object(Project, 'playbooks', new_callable=PlaybooksMock)
     mocked.start()
+
+
+@pytest.fixture
+def run_computed_fields_right_away(request):
+
+    def run_me(inventory_id):
+        i = Inventory.objects.get(id=inventory_id)
+        i.update_computed_fields()
+
+    mocked = mock.patch(
+        'awx.main.signals.update_inventory_computed_fields.delay',
+        new=run_me
+    )
+    mocked.start()
+
+    request.addfinalizer(mocked.stop)
 
 
 @pytest.fixture
@@ -221,6 +222,13 @@ def organization(instance):
 
 
 @pytest.fixture
+def credentialtype_kube():
+    kube = CredentialType.defaults['kubernetes_bearer_token']()
+    kube.save()
+    return kube
+
+
+@pytest.fixture
 def credentialtype_ssh():
     ssh = CredentialType.defaults['ssh']()
     ssh.save()
@@ -260,6 +268,49 @@ def credentialtype_insights():
     insights_type = CredentialType.defaults['insights']()
     insights_type.save()
     return insights_type
+
+
+@pytest.fixture
+def credentialtype_external():
+    external_type_inputs = {
+        'fields': [{
+            'id': 'url',
+            'label': 'Server URL',
+            'type': 'string',
+            'help_text': 'The server url.'
+        }, {
+            'id': 'token',
+            'label': 'Token',
+            'type': 'string',
+            'secret': True,
+            'help_text': 'An access token for the server.'
+        }],
+        'metadata': [{
+            'id': 'key',
+            'label': 'Key',
+            'type': 'string'
+        }, {
+            'id': 'version',
+            'label': 'Version',
+            'type': 'string'
+        }],
+        'required': ['url', 'token', 'key'],
+    }
+
+    class MockPlugin(object):
+        def backend(self, **kwargs):
+            return 'secret'
+
+    with mock.patch('awx.main.models.credential.CredentialType.plugin', new_callable=PropertyMock) as mock_plugin:
+        mock_plugin.return_value = MockPlugin()
+        external_type = CredentialType(
+            kind='external',
+            managed_by_tower=True,
+            name='External Service',
+            inputs=external_type_inputs
+        )
+        external_type.save()
+        yield external_type
 
 
 @pytest.fixture
@@ -303,6 +354,24 @@ def org_credential(organization, credentialtype_aws):
     return Credential.objects.create(credential_type=credentialtype_aws, name='test-cred',
                                      inputs={'username': 'something', 'password': 'secret'},
                                      organization=organization)
+
+
+@pytest.fixture
+def external_credential(credentialtype_external):
+    return Credential.objects.create(credential_type=credentialtype_external, name='external-cred',
+                                     inputs={'url': 'http://testhost.com', 'token': 'secret1'})
+
+
+@pytest.fixture
+def other_external_credential(credentialtype_external):
+    return Credential.objects.create(credential_type=credentialtype_external, name='other-external-cred',
+                                     inputs={'url': 'http://testhost.com', 'token': 'secret2'})
+
+
+@pytest.fixture
+def kube_credential(credentialtype_kube):
+    return Credential.objects.create(credential_type=credentialtype_kube, name='kube-cred',
+                                     inputs={'host': 'my.cluster', 'bearer_token': 'my-token', 'verify_ssl': False})
 
 
 @pytest.fixture
@@ -354,7 +423,9 @@ def notification_template(organization):
                                                organization=organization,
                                                notification_type="webhook",
                                                notification_configuration=dict(url="http://localhost",
-                                                                               headers={"Test": "Header"}))
+                                                                               username="",
+                                                                               password="",
+                                                                               headers={"Test": "Header",}))
 
 
 @pytest.fixture
@@ -436,7 +507,7 @@ def org_member(user, organization):
 def organizations(instance):
     def rf(organization_count=1):
         orgs = []
-        for i in xrange(0, organization_count):
+        for i in range(0, organization_count):
             o = Organization.objects.create(name="test-org-%d" % i, description="test-org-desc")
             orgs.append(o)
         return orgs
@@ -459,7 +530,7 @@ def hosts(group_factory):
 
     def rf(host_count=1):
         hosts = []
-        for i in xrange(0, host_count):
+        for i in range(0, host_count):
             name = '%s-host-%s' % (group1.name, i)
             (host, created) = group1.inventory.hosts.get_or_create(name=name)
             if created:
@@ -476,8 +547,9 @@ def group(inventory):
 
 @pytest.fixture
 def inventory_source(inventory):
+    # by making it ec2, the credential is not required
     return InventorySource.objects.create(name='single-inv-src',
-                                          inventory=inventory, source='gce')
+                                          inventory=inventory, source='ec2')
 
 
 @pytest.fixture
@@ -534,8 +606,12 @@ def _request(verb):
         if 'format' not in kwargs and 'content_type' not in kwargs:
             kwargs['format'] = 'json'
 
-        view, view_args, view_kwargs = resolve(urlparse(url)[2])
         request = getattr(APIRequestFactory(), verb)(url, **kwargs)
+        request_error = None
+        try:
+            view, view_args, view_kwargs = resolve(urllib.parse.urlparse(url)[2])
+        except Http404 as e:
+            request_error = e
         if isinstance(kwargs.get('cookies', None), dict):
             for key, value in kwargs['cookies'].items():
                 request.COOKIES[key] = value
@@ -544,7 +620,10 @@ def _request(verb):
         if user:
             force_authenticate(request, user=user)
 
-        response = view(request, *view_args, **view_kwargs)
+        if not request_error:
+            response = view(request, *view_args, **view_kwargs)
+        else:
+            response = response_for_exception(request, request_error)
         if middleware:
             middleware.process_response(request, response)
         if expect:
@@ -562,7 +641,9 @@ def _request(verb):
                                 response.data[key] = str(value)
                     except Exception:
                         response.data = data_copy
-            assert response.status_code == expect
+            assert response.status_code == expect, 'Response data: {}'.format(
+                getattr(response, 'data', None)
+            )
         if hasattr(response, 'render'):
             response.render()
         __SWAGGER_REQUESTS__.setdefault(request.path, {})[
@@ -608,50 +689,6 @@ def options():
 
 
 @pytest.fixture
-def fact_scans(group_factory, fact_ansible_json, fact_packages_json, fact_services_json):
-    group1 = group_factory('group-1')
-
-    def rf(fact_scans=1, timestamp_epoch=timezone.now()):
-        facts_json = {}
-        facts = []
-        module_names = ['ansible', 'services', 'packages']
-        timestamp_current = timestamp_epoch
-
-        facts_json['ansible'] = fact_ansible_json
-        facts_json['packages'] = fact_packages_json
-        facts_json['services'] = fact_services_json
-
-        for i in xrange(0, fact_scans):
-            for host in group1.hosts.all():
-                for module_name in module_names:
-                    facts.append(Fact.objects.create(host=host, timestamp=timestamp_current, module=module_name, facts=facts_json[module_name]))
-            timestamp_current += timedelta(days=1)
-        return facts
-    return rf
-
-
-def _fact_json(module_name):
-    current_dir = os.path.dirname(os.path.realpath(__file__))
-    with open('%s/%s.json' % (current_dir, module_name)) as f:
-        return json.load(f)
-
-
-@pytest.fixture
-def fact_ansible_json():
-    return _fact_json('ansible')
-
-
-@pytest.fixture
-def fact_packages_json():
-    return _fact_json('packages')
-
-
-@pytest.fixture
-def fact_services_json():
-    return _fact_json('services')
-
-
-@pytest.fixture
 def ad_hoc_command_factory(inventory, machine_credential, admin):
     def factory(inventory=inventory, credential=machine_credential, initial_state='new', created_by=admin):
         adhoc = AdHocCommand(
@@ -680,8 +717,26 @@ def job_template_labels(organization, job_template):
 
 
 @pytest.fixture
+def jt_linked(job_template_factory, credential, net_credential, vault_credential):
+    '''
+    A job template with a reasonably complete set of related objects to
+    test RBAC and other functionality affected by related objects
+    '''
+    objects = job_template_factory(
+        'testJT', organization='org1', project='proj1', inventory='inventory1',
+        credential='cred1')
+    jt = objects.job_template
+    jt.credentials.add(vault_credential)
+    jt.save()
+    # Add AWS cloud credential and network credential
+    jt.credentials.add(credential)
+    jt.credentials.add(net_credential)
+    return jt
+
+
+@pytest.fixture
 def workflow_job_template(organization):
-    wjt = WorkflowJobTemplate(name='test-workflow_job_template')
+    wjt = WorkflowJobTemplate(name='test-workflow_job_template', organization=organization)
     wjt.save()
 
     return wjt
@@ -721,7 +776,7 @@ def get_db_prep_save(self, value, connection, **kwargs):
         return None
     # default values come in as strings; only non-strings should be
     # run through `dumps`
-    if not isinstance(value, six.string_types):
+    if not isinstance(value, str):
         value = dumps(value)
 
     return value
@@ -729,7 +784,7 @@ def get_db_prep_save(self, value, connection, **kwargs):
 
 @pytest.fixture
 def monkeypatch_jsonbfield_get_db_prep_save(mocker):
-    JSONField.get_db_prep_save = get_db_prep_save
+    JSONBField.get_db_prep_save = get_db_prep_save
 
 
 @pytest.fixture
@@ -738,3 +793,65 @@ def oauth_application(admin):
         name='test app', user=admin, client_type='confidential',
         authorization_grant_type='password'
     )
+
+
+@pytest.fixture
+def sqlite_copy_expert(request):
+    # copy_expert is postgres-specific, and SQLite doesn't support it; mock its
+    # behavior to test that it writes a file that contains stdout from events
+    path = tempfile.mkdtemp(prefix='job-event-stdout')
+
+    def write_stdout(self, sql, fd):
+        # simulate postgres copy_expert support with ORM code
+        parts = sql.split(' ')
+        tablename = parts[parts.index('from') + 1]
+        for cls in (JobEvent, AdHocCommandEvent, ProjectUpdateEvent,
+                    InventoryUpdateEvent, SystemJobEvent):
+            if cls._meta.db_table == tablename:
+                for event in cls.objects.order_by('start_line').all():
+                    fd.write(event.stdout)
+
+    setattr(SQLiteCursorWrapper, 'copy_expert', write_stdout)
+    request.addfinalizer(lambda: shutil.rmtree(path))
+    request.addfinalizer(lambda: delattr(SQLiteCursorWrapper, 'copy_expert'))
+    return path
+
+
+@pytest.fixture
+def disable_database_settings(mocker):
+    m = mocker.patch('awx.conf.settings.SettingsWrapper.all_supported_settings', new_callable=PropertyMock)
+    m.return_value = []
+
+
+@pytest.fixture
+def slice_jt_factory(inventory):
+    def r(N, jt_kwargs=None):
+        for i in range(N):
+            inventory.hosts.create(name='foo{}'.format(i))
+        if not jt_kwargs:
+            jt_kwargs = {}
+        return JobTemplate.objects.create(
+            name='slice-jt-from-factory',
+            job_slice_count=N,
+            inventory=inventory,
+            **jt_kwargs
+        )
+    return r
+
+
+@pytest.fixture
+def slice_job_factory(slice_jt_factory):
+    def r(N, jt_kwargs=None, prompts=None, spawn=False):
+        slice_jt = slice_jt_factory(N, jt_kwargs=jt_kwargs)
+        if not prompts:
+            prompts = {}
+        slice_job = slice_jt.create_unified_job(**prompts)
+        if spawn:
+            for node in slice_job.workflow_nodes.all():
+                # does what the task manager does for spawning workflow jobs
+                kv = node.get_job_kwargs()
+                job = node.unified_job_template.create_unified_job(**kv)
+                node.job = job
+                node.save()
+        return slice_job
+    return r

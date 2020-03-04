@@ -1,4 +1,4 @@
-import mock
+from unittest import mock
 import pytest
 
 
@@ -39,6 +39,7 @@ def get_summary_fields_assert():
 def get_summary_fields_mock_and_run():
     def fn(serializer_class, model_obj):
         serializer = serializer_class()
+        serializer.show_capabilities = []
         serializer.context['view'] = mock.Mock(kwargs={})
         return serializer.get_summary_fields(model_obj)
     return fn

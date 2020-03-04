@@ -4,12 +4,12 @@ function ComponentsStrings (BaseString) {
     const { t } = this;
     const ns = this.components;
 
-    ns.REPLACE = t.s('REPLACE');
-    ns.REVERT = t.s('REVERT');
+    ns.REPLACE = t.s('Replace');
+    ns.REVERT = t.s('Revert');
     ns.ENCRYPTED = t.s('ENCRYPTED');
     ns.OPTIONS = t.s('OPTIONS');
-    ns.SHOW = t.s('SHOW');
-    ns.HIDE = t.s('HIDE');
+    ns.SHOW = t.s('Show');
+    ns.HIDE = t.s('Hide');
 
     ns.message = {
         REQUIRED_INPUT_MISSING: t.s('Please enter a value.'),
@@ -40,7 +40,7 @@ function ComponentsStrings (BaseString) {
     };
 
     ns.textarea = {
-        SSH_KEY_HINT: t.s('HINT: Drag and drop an SSH private key file on the field below.')
+        SSH_KEY_HINT: t.s('HINT: Drag and drop private file on the field below.')
     };
 
     ns.lookup = {
@@ -52,6 +52,15 @@ function ComponentsStrings (BaseString) {
         COPIED: t.s('Copied to clipboard.')
     };
 
+    ns.toggle = {
+        VIEW_MORE: t.s('VIEW MORE'),
+        VIEW_LESS: t.s('VIEW LESS')
+    };
+
+    ns.tooltips = {
+        VIEW_THE_CREDENTIAL: t.s('View the Credential'),
+    };
+
     ns.layout = {
         CURRENT_USER_LABEL: t.s('Logged in as'),
         VIEW_DOCS: t.s('View Documentation'),
@@ -59,7 +68,7 @@ function ComponentsStrings (BaseString) {
         DASHBOARD: t.s('Dashboard'),
         JOBS: t.s('Jobs'),
         SCHEDULES: t.s('Schedules'),
-        PORTAL_MODE: t.s('Portal Mode'),
+        MY_VIEW: t.s('My View'),
         PROJECTS: t.s('Projects'),
         CREDENTIALS: t.s('Credentials'),
         CREDENTIAL_TYPES: t.s('Credential Types'),
@@ -75,8 +84,16 @@ function ComponentsStrings (BaseString) {
         INSTANCE_GROUPS: t.s('Instance Groups'),
         APPLICATIONS: t.s('Applications'),
         SETTINGS: t.s('Settings'),
-        FOOTER_ABOUT: t.s('About'),
-        FOOTER_COPYRIGHT: t.s('Copyright © 2018 Red Hat, Inc.')
+        ABOUT: t.s('About'),
+        COPYRIGHT: t.s('Copyright © 2019 Red Hat, Inc.'),
+        VIEWS_HEADER: t.s('Views'),
+        RESOURCES_HEADER: t.s('Resources'),
+        ACCESS_HEADER: t.s('Access'),
+        ADMINISTRATION_HEADER: t.s('Administration'),
+        AUTHENTICATION: t.s('Authentication'),
+        SYSTEM: t.s('System'),
+        USER_INTERFACE: t.s('User Interface'),
+        LICENSE: t.s('License')
     };
 
     ns.relaunch = {
@@ -87,8 +104,32 @@ function ComponentsStrings (BaseString) {
         FAILED: t.s('Failed')
     };
 
+    ns.launchTemplate = {
+        DEFAULT: t.s('Start a job using this template'),
+        DISABLED: t.s('Please save before launching this template.'),
+        BUTTON_LABEL: t.s('LAUNCH')
+    };
+
     ns.list = {
         DEFAULT_EMPTY_LIST: t.s('Please add items to this list.')
+    };
+
+    ns.toolbar = {
+        COMPACT: t.s('Compact'),
+        EXPANDED: t.s('Expanded'),
+        SORT_BY: t.s('SORT BY')
+    };
+
+    ns.approvals = {
+        APPROVAL: t.s('APPROVAL'),
+        NONE: t.s('There are no jobs awaiting approval'),
+        APPROVE: t.s('APPROVE'),
+        DENY: t.s('DENY'),
+        CONTINUE: t.s('Continue workflow job?'),
+        NOTIFICATIONS: t.s('NOTIFICATIONS'),
+        WORKFLOW_TEMPLATE: t.s('Workflow Template'),
+        EXPIRES: t.s('Expires:'),
+        EXPIRES_NEVER: t.s('Expires: Never')
     };
 }
 

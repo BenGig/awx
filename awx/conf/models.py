@@ -33,7 +33,7 @@ class Setting(CreatedModifiedModel):
         on_delete=models.CASCADE,
     ))
 
-    def __unicode__(self):
+    def __str__(self):
         try:
             json_value = json.dumps(self.value)
         except ValueError:
@@ -77,6 +77,14 @@ class Setting(CreatedModifiedModel):
     @classmethod
     def get_cache_id_key(self, key):
         return '{}_ID'.format(key)
+
+    def display_value(self):
+        if self.key == 'LICENSE' and 'license_key' in self.value:
+            # don't log the license key in activity stream
+            value = self.value.copy()
+            value['license_key'] = '********'
+            return value
+        return self.value
 
 
 import awx.conf.signals  # noqa

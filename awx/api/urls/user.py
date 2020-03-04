@@ -15,8 +15,8 @@ from awx.api.views import (
     UserActivityStreamList,
     UserAccessList,
     OAuth2ApplicationList,
-    OAuth2TokenList,
-    OAuth2PersonalTokenList,
+    OAuth2UserTokenList,
+    UserPersonalTokenList,
     UserAuthorizedTokenList,
 )
 
@@ -32,9 +32,9 @@ urls = [
     url(r'^(?P<pk>[0-9]+)/activity_stream/$', UserActivityStreamList.as_view(), name='user_activity_stream_list'),
     url(r'^(?P<pk>[0-9]+)/access_list/$', UserAccessList.as_view(), name='user_access_list'),
     url(r'^(?P<pk>[0-9]+)/applications/$', OAuth2ApplicationList.as_view(), name='o_auth2_application_list'),
-    url(r'^(?P<pk>[0-9]+)/tokens/$', OAuth2TokenList.as_view(), name='o_auth2_token_list'),
+    url(r'^(?P<pk>[0-9]+)/tokens/$', OAuth2UserTokenList.as_view(), name='o_auth2_token_list'),
     url(r'^(?P<pk>[0-9]+)/authorized_tokens/$', UserAuthorizedTokenList.as_view(), name='user_authorized_token_list'),
-    url(r'^(?P<pk>[0-9]+)/personal_tokens/$', OAuth2PersonalTokenList.as_view(), name='o_auth2_personal_token_list'),
+    url(r'^(?P<pk>[0-9]+)/personal_tokens/$', UserPersonalTokenList.as_view(), name='user_personal_token_list'),
     
 ] 
 

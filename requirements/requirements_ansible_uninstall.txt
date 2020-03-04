@@ -1,2 +1,2 @@
-certifi
 pycurl  # requires system package version
+rsa	# stop adding new crypto libs

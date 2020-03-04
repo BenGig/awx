@@ -3,8 +3,8 @@ import pytest
 from awx.api.versioning import reverse
 from django.test.client import RequestFactory
 
-from awx.main.models import Role, Group, UnifiedJobTemplate, JobTemplate
-from awx.main.access import access_registry
+from awx.main.models import Role, Group, UnifiedJobTemplate, JobTemplate, WorkflowJobTemplate
+from awx.main.access import access_registry, WorkflowJobTemplateAccess
 from awx.main.utils import prefetch_page_capabilities
 from awx.api.serializers import JobTemplateSerializer, UnifiedJobTemplateSerializer
 
@@ -65,7 +65,7 @@ class TestJobTemplateCopyEdit:
         return objects.job_template
 
     def fake_context(self, user):
-        request = RequestFactory().get('/api/v1/resource/42/')
+        request = RequestFactory().get('/api/v2/resource/42/')
         request.user = user
 
         class FakeView(object):
@@ -151,7 +151,7 @@ def mock_access_method(mocker):
 class TestAccessListCapabilities:
     """
     Test that the access_list serializer shows the exact output of the RoleAccess.can_attach
-     - looks at /api/v1/inventories/N/access_list/
+     - looks at /api/v2/inventories/N/access_list/
      - test for types: direct, indirect, and team access
     """
 
@@ -195,12 +195,6 @@ class TestAccessListCapabilities:
         self._assert_one_in_list(response.data)
         direct_access_list = response.data['results'][0]['summary_fields']['direct_access']
         assert direct_access_list[0]['role']['user_capabilities']['unattach'] == 'foobar'
-
-    def test_user_access_list_direct_access_capability(self, rando, get):
-        "When a user views their own access list, they cannot unattach their admin role"
-        response = get(reverse('api:user_access_list', kwargs={'pk': rando.id}), rando)
-        direct_access_list = response.data['results'][0]['summary_fields']['direct_access']
-        assert not direct_access_list[0]['role']['user_capabilities']['unattach']
 
 
 @pytest.mark.django_db
@@ -323,17 +317,18 @@ def test_prefetch_jt_copy_capability(job_template, project, inventory, rando):
 
 
 @pytest.mark.django_db
+def test_workflow_orphaned_capabilities(rando):
+    wfjt = WorkflowJobTemplate.objects.create(name='test', organization=None)
+    wfjt.admin_role.members.add(rando)
+    access = WorkflowJobTemplateAccess(rando)
+    assert not access.get_user_capabilities(
+        wfjt, method_list=['edit', 'copy'],
+        capabilities_cache={'copy': True}
+    )['copy']
+
+
+@pytest.mark.django_db
 def test_manual_projects_no_update(manual_project, get, admin_user):
     response = get(reverse('api:project_detail', kwargs={'pk': manual_project.pk}), admin_user, expect=200)
     assert not response.data['summary_fields']['user_capabilities']['start']
     assert not response.data['summary_fields']['user_capabilities']['schedule']
-
-
-@pytest.mark.django_db
-def test_license_check_not_called(mocker, job_template, project, org_admin, get):
-    job_template.project = project
-    job_template.save() # need this to make the JT visible
-    mock_license_check = mocker.MagicMock()
-    with mocker.patch('awx.main.access.BaseAccess.check_license', mock_license_check):
-        get(reverse('api:job_template_detail', kwargs={'pk': job_template.pk}), org_admin, expect=200)
-        assert not mock_license_check.called

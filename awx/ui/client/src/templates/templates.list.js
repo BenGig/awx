@@ -30,11 +30,11 @@ export default ['i18n', function(i18n) {
             type: {
                 label: i18n._('Type'),
                 ngBind: 'template.type_label',
-                columnClass: 'col-lg-2 col-md-2 col-sm-4 hidden-xs'
+                columnClass: 'd-none d-sm-flex col-lg-2 col-md-2 col-sm-4'
             },
             smart_status: {
               label: i18n._('Activity'),
-              columnClass: 'List-tableCell col-lg-2 col-md-3 hidden-sm hidden-xs',
+              columnClass: 'd-none d-md-flex List-tableCell col-lg-2 col-md-3',
               nosort: true,
               ngInclude: "'/static/partials/job-template-smart-status.html'",
               type: 'template'
@@ -44,7 +44,7 @@ export default ['i18n', function(i18n) {
                 type: 'labels',
                 nosort: true,
                 showDelete: true,
-                columnClass: 'List-tableCell col-lg-2 col-md-3 hidden-sm hidden-xs'
+                columnClass: 'd-none d-md-flex List-tableCell col-lg-2 col-md-3'
             }
         },
 
@@ -54,8 +54,8 @@ export default ['i18n', function(i18n) {
                 type: 'buttonDropdown',
                 basePaths: ['templates'],
                 awToolTip: i18n._('Create a new template'),
-                actionClass: 'btn List-dropdownSuccess',
-                buttonContent: '&#43; ' + i18n._('ADD'),
+                actionClass: 'at-Button--add',
+                actionId: 'button-add',
                 options: [
                     {
                         optionContent: i18n._('Job Template'),
@@ -76,29 +76,6 @@ export default ['i18n', function(i18n) {
 
             columnClass: 'col-lg-2 col-md-3 col-sm-4 col-xs-3',
 
-            submit: {
-                label: i18n._('Launch'),
-                mode: 'all',
-                ngClick: 'submitJob(template)',
-                awToolTip: i18n._('Start a job using this template'),
-                dataPlacement: 'top',
-                ngShow: 'template.summary_fields.user_capabilities.start'
-            },
-            schedule: {
-                label: i18n._('Schedule'),
-                mode: 'all',
-                ngClick: 'scheduleJob(template)',
-                awToolTip: i18n._('Schedule job template runs'),
-                dataPlacement: 'top',
-            },
-            copy: {
-                label: i18n._('Copy'),
-                ngClick: 'copyTemplate(template)',
-                "class": 'btn-danger btn-xs',
-                awToolTip: i18n._('Copy template'),
-                dataPlacement: 'top',
-                ngShow: 'template.summary_fields.user_capabilities.copy'
-            },
             edit: {
                 label: i18n._('Edit'),
                 ngClick: "editJobTemplate(template)",
@@ -107,6 +84,18 @@ export default ['i18n', function(i18n) {
                 dataPlacement: 'top',
                 ngShow: 'template.summary_fields.user_capabilities.edit',
                 editStateParams: ['job_template_id', 'workflow_job_template_id']
+            },
+            submit: {
+                // The submit key lets the list generator know that we want to use the
+                // at-launch-template directive
+            },
+            copy: {
+                label: i18n._('Copy'),
+                ngClick: 'copyTemplate(template)',
+                "class": 'btn-danger btn-xs',
+                awToolTip: i18n._('Copy template'),
+                dataPlacement: 'top',
+                ngShow: 'template.summary_fields.user_capabilities.copy'
             },
             view: {
                 label: i18n._('View'),

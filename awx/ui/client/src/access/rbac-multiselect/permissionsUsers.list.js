@@ -15,15 +15,21 @@
         multiSelectExtended: true,
         index: false,
         hover: true,
-        emptyListText : i18n._('No Users exist'),
+        emptyListText: i18n._('No Users to add'),
+        disableRow: "{{ objectType === 'organization' && user.summary_fields.user_capabilities.edit === false }}",
+        disableRowValue: "objectType === 'organization' && user.summary_fields.user_capabilities.edit === false",
+        disableTooltip: {
+            placement: 'top',
+            tipWatch: 'user.tooltip'
+        },
         fields: {
             first_name: {
                 label: i18n._('First Name'),
-                columnClass: 'col-md-3 col-sm-3 hidden-xs'
+                columnClass: 'd-none d-sm-flex col-md-3 col-sm-3'
             },
             last_name: {
                 label: i18n._('Last Name'),
-                columnClass: 'col-md-3 col-sm-3 hidden-xs'
+                columnClass: 'd-none d-sm-flex col-md-3 col-sm-3'
             },
             username: {
                 key: true,

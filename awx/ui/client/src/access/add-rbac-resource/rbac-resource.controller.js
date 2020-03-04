@@ -25,9 +25,18 @@ export default ['$rootScope', '$scope', 'GetBasePath', 'Rest', '$q', 'Wait', 'Pr
         // the object permissions are being added to
         scope.object = scope.resourceData.data;
         // array for all possible roles for the object
-        scope.roles = _.omit(scope.object.summary_fields.object_roles, (key) => {
-            return key.name === 'Read';
-        });
+        scope.roles = angular.copy(scope.object.summary_fields.object_roles);
+
+        const objectType = _.get(scope, ['object', 'type']);
+        const teamRoles = _.get(scope, ['object', 'summary_fields', 'object_roles'], {});
+
+        if (objectType === 'organization') {
+            // some organization object_roles aren't allowed for teams
+            delete teamRoles.admin_role;
+            delete teamRoles.member_role;
+        }
+
+        scope.teamRoles = teamRoles;
 
         // TODO: get working with api
         // array w roles and descriptions for key
@@ -82,6 +91,7 @@ export default ['$rootScope', '$scope', 'GetBasePath', 'Rest', '$q', 'Wait', 'Pr
     scope.removeObject = function(obj){
         let resourceType = scope.currentTab();
         delete scope.allSelected[resourceType][obj.id];
+        obj.isSelected = false;
     };
 
     scope.toggleKeyPane = function() {
@@ -89,7 +99,7 @@ export default ['$rootScope', '$scope', 'GetBasePath', 'Rest', '$q', 'Wait', 'Pr
     };
 
     scope.hasSelectedRows = function(){
-        return _.any(scope.allSelected, (type) => Object.keys(type).length > 0);
+        return _.some(scope.allSelected, (type) => Object.keys(type).length > 0);
     };
 
     scope.selectTab = function(selected){
@@ -109,11 +119,16 @@ export default ['$rootScope', '$scope', 'GetBasePath', 'Rest', '$q', 'Wait', 'Pr
                 var url = GetBasePath(selectedValue.type + "s") + selectedValue.id +
                     "/roles/";
 
-                 (selectedValue.roles || [])
-                    .map(function(role) {
-                        Rest.setUrl(url);
-                        requests.push(Rest.post({ "id": role.value || role.id }));
-                    });
+                if (scope.onlyMemberRole === 'true') {
+                    Rest.setUrl(url);
+                    requests.push(Rest.post({ "id": scope.roles.member_role.id }));
+                } else {
+                    (selectedValue.roles || [])
+                        .map(function(role) {
+                            Rest.setUrl(url);
+                            requests.push(Rest.post({ "id": role.value || role.id }));
+                        });
+                }
             });
         });
 

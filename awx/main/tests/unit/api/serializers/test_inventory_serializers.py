@@ -1,7 +1,7 @@
 # Python
 import pytest
-import mock
-from mock import PropertyMock
+from unittest import mock
+from unittest.mock import PropertyMock
 
 # AWX
 from awx.api.serializers import (
@@ -71,7 +71,7 @@ class TestInventorySourceSerializerGetRelated(object):
         'activity_stream',
         'notification_templates_error',
         'notification_templates_success',
-        'notification_templates_any',
+        'notification_templates_started',
         'inventory_updates',
         'update',
         'hosts',

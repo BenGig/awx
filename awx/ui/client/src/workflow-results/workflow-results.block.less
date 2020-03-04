@@ -9,22 +9,38 @@
             max-width: 100%;
         }
     }
+
+    @media screen and (max-width: @breakpoint-md) {
+        display: block;
+        min-width: 400px;
+    }
 }
 
 .WorkflowResults-leftSide {
-    .OnePlusTwo-left--panel(100%, @breakpoint-md);
-    height: ~"calc(100vh - 177px)";
-    min-height: 350px;
+    max-width: 33%;
 
-    .Panel {
+    .OnePlusTwo-left--panel(100%, @breakpoint-md);
+    height: ~"calc(100vh - 120px)";
+    min-height: 350px;
+    display:flex;
+    .card {
+        width: 100%;
         overflow: scroll;
+    }
+    @media screen and (width: @breakpoint-md - 1px){
+        width: 100%;
     }
 }
 
 .WorkflowResults-rightSide {
     .OnePlusTwo-right--panel(100%, @breakpoint-md);
-    height: ~"calc(100vh - 177px)";
+    height: ~"calc(100vh - 120px)";
     min-height: 350px;
+    min-width: 0;
+    display:flex;
+    .card {
+        width:100%
+    }
 
     @media (max-width: @breakpoint-md - 1px) {
         padding-right: 15px;
@@ -73,7 +89,7 @@
 .WorkflowResults-resultRowLabel {
     text-transform: uppercase;
     color: @default-interface-txt;
-    font-size: 14px;
+    font-size: 12px;
     font-weight: normal!important;
     width: 30%;
     margin-right: 20px;
@@ -137,7 +153,23 @@
     margin-left: 20px;
 }
 
-.WorkflowResults-extraVarsHelp {
-    margin-left: 10px;
-    color: @default-icon;
+.WorkflowResults-extraVarsLabel {
+    font-size:14px!important;
+}
+
+.WorkflowResults-seeMoreLess {
+    color: #337AB7;
+    margin: 4px 0px;
+    text-transform: uppercase;
+    padding: 2px 0px;
+    cursor: pointer;
+    border-radius: 5px;
+    font-size: 11px;
+}
+
+.WorkflowResults-rightSide .WorkflowChart-svg {
+    background-color: @f6grey;
+    border: 1px solid @d7grey;
+    border-top: 0px;
+    border-bottom-right-radius: 5px;
 }

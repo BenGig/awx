@@ -3,6 +3,11 @@ import pytest
 from awx.main.models.inventory import Inventory
 from awx.main.models.credential import Credential
 from awx.main.models.jobs import JobTemplate, Job
+from awx.main.access import (
+    UnifiedJobAccess,
+    WorkflowJobAccess, WorkflowJobNodeAccess,
+    JobAccess
+)
 
 
 @pytest.mark.django_db
@@ -14,6 +19,19 @@ def test_admin_executing_permissions(deploy_jobtemplate, inventory, machine_cred
     assert admin_user.can_access(Inventory, 'run_ad_hoc_commands', inventory)  # for ad_hoc
     assert admin_user.can_access(JobTemplate, 'start', deploy_jobtemplate)
     assert admin_user.can_access(Credential, 'use', machine_credential)
+
+
+@pytest.mark.django_db
+@pytest.mark.job_permissions
+def test_admin_executing_permissions_with_limits(deploy_jobtemplate, inventory, user):
+    admin_user = user('admin-user', True)
+
+    inventory.organization.max_hosts = 1
+    inventory.organization.save()
+    inventory.hosts.create(name="Existing host 1")
+    inventory.hosts.create(name="Existing host 2")
+
+    assert admin_user.can_access(JobTemplate, 'start', deploy_jobtemplate)
 
 
 @pytest.mark.django_db
@@ -41,6 +59,31 @@ def test_inventory_use_access(inventory, user):
     inventory.use_role.members.add(common_user)
 
     assert common_user.can_access(Inventory, 'use', inventory)
+
+
+@pytest.mark.django_db
+def test_slice_job(slice_job_factory, rando):
+    workflow_job = slice_job_factory(2, jt_kwargs={'created_by': rando}, spawn=True)
+    workflow_job.job_template.execute_role.members.add(rando)
+
+    # Abilities of user with execute_role for slice workflow job container
+    assert WorkflowJobAccess(rando).can_start(workflow_job)  # relaunch allowed
+    for access_cls in (UnifiedJobAccess, WorkflowJobAccess):
+        access = access_cls(rando)
+        assert access.can_read(workflow_job)
+        assert workflow_job in access.get_queryset()
+
+    # Abilities of user with execute_role for all the slice of the job
+    for node in workflow_job.workflow_nodes.all():
+        access = WorkflowJobNodeAccess(rando)
+        assert access.can_read(node)
+        assert node in access.get_queryset()
+        job = node.job
+        assert JobAccess(rando).can_start(job)  # relaunch allowed
+        for access_cls in (UnifiedJobAccess, JobAccess):
+            access = access_cls(rando)
+            assert access.can_read(job)
+            assert job in access.get_queryset()
 
 
 @pytest.mark.django_db
@@ -87,6 +130,7 @@ class TestJobRelaunchAccess:
         for cred in job_with_prompts.credentials.all():
             cred.use_role.members.add(rando)
         job_with_prompts.inventory.use_role.members.add(rando)
+        job_with_prompts.created_by = rando
         assert rando.can_access(Job, 'start', job_with_prompts)
 
     def test_no_relaunch_after_limit_change(self, inventory, machine_credential, rando):

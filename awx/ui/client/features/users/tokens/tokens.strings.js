@@ -28,13 +28,18 @@ function TokensStrings (BaseString) {
         DELETE_ACTION_LABEL: t.s('DELETE'),
         SCOPE_PLACEHOLDER: t.s('Select a scope'),
         SCOPE_READ_LABEL: t.s('Read'),
-        SCOPE_WRITE_LABEL: t.s('Write')
+        SCOPE_WRITE_LABEL: t.s('Write'),
+        APPLICATION_HELP_TEXT: t.s('Leaving this field blank will result in the creation of a Personal Access Token which is not linked to an Application.')
     };
 
     ns.list = {
         ROW_ITEM_LABEL_DESCRIPTION: t.s('DESCRIPTION'),
         ROW_ITEM_LABEL_EXPIRED: t.s('EXPIRATION'),
-        ROW_ITEM_LABEL_USED: t.s('LAST USED')
+        ROW_ITEM_LABEL_USED: t.s('LAST USED'),
+        ROW_ITEM_LABEL_SCOPE: t.s('SCOPE'),
+        ROW_ITEM_LABEL_APPLICATION: t.s('APPLICATION'),
+        PERSONAL_ACCESS_TOKEN: t.s('Personal Access Token'),
+        HEADER: appName => t.s('{{ appName }} Token', { appName }),
     };
 }
 

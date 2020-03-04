@@ -4,6 +4,19 @@ import ListController from './users-tokens-list.controller';
 
 const listTemplate = require('~features/users/tokens/users-tokens-list.partial.html');
 
+function TokensListResolve ($q, Token) {
+    const promises = {};
+
+    promises.token = new Token('options');
+
+    return $q.all(promises);
+}
+
+TokensListResolve.$inject = [
+    '$q',
+    'TokenModel',
+];
+
 export default {
     url: '/tokens',
     name: 'users.edit.tokens',
@@ -17,16 +30,22 @@ export default {
             controllerAs: 'vm'
         }
     },
+    data: {
+        activityStream: true,
+        activityStreamTarget: 'o_auth2_access_token',
+        noActivityStreamID: true
+    },
     searchPrefix: 'token',
     params: {
         token_search: {
             value: {
-                page_size: 5,
-                order_by: 'application'
+                page_size: 10,
+                order_by: 'application__name'
             }
         }
     },
     resolve: {
+        resolvedModels: TokensListResolve,
         Dataset: [
             '$stateParams',
             'Wait',

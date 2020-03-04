@@ -7,12 +7,12 @@
  export default ['$scope', 'Wait', 'NotificationTemplatesList',
      'GetBasePath', 'Rest', 'ProcessErrors', 'Prompt', '$state',
      'ngToast', '$filter', 'Dataset', 'rbacUiControlService',
-     'i18n', 'NotificationTemplate',
+     'i18n', 'NotificationTemplate', 'AppStrings',
      function(
          $scope, Wait, NotificationTemplatesList,
          GetBasePath, Rest, ProcessErrors, Prompt, $state,
          ngToast, $filter, Dataset, rbacUiControlService,
-         i18n, NotificationTemplate) {
+         i18n, NotificationTemplate, AppStrings) {
 
          var defaultUrl = GetBasePath('notification_templates'),
              list = NotificationTemplatesList;
@@ -92,12 +92,21 @@
             Wait('start');
             new NotificationTemplate('get', notificationTemplate.id)
                 .then(model => model.copy())
-                .then(({ id }) => {
-                    const params =  {
-                        notification_template_id: id,
-                        notification_template: this.notification_templates
-                    };
-                    $state.go('notifications.edit', params, { reload: true });
+                .then((copiedNotification) => {
+                    ngToast.success({
+                        content: `
+                            <div class="Toast-wrapper">
+                                <div class="Toast-icon">
+                                    <i class="fa fa-check-circle Toast-successIcon"></i>
+                                </div>
+                                <div>
+                                    ${AppStrings.get('SUCCESSFUL_CREATION', copiedNotification.name)}
+                                </div>
+                            </div>`,
+                        dismissButton: false,
+                        dismissOnTimeout: true
+                    });
+                    $state.go('.', null, { reload: true });
                 })
                 .catch(({ data, status }) => {
                     const params = { hdr: 'Error!', msg: `Call to copy failed. Return status: ${status}` };
@@ -108,7 +117,7 @@
 
          $scope.testNotification = function() {
              var name = $filter('sanitize')(this.notification_template.name),
-                 pending_retries = 10;
+                 pending_retries = 25;
 
              Rest.setUrl(defaultUrl + this.notification_template.id + '/test/');
              Rest.post({})
@@ -122,7 +131,7 @@
                      } else {
                          ProcessErrors($scope, data, status, null, {
                              hdr: 'Error!',
-                             msg: 'Call to notifcatin templates failed. Notification returned status: ' + status
+                             msg: 'Call to notification templates failed. Notification returned status: ' + status
                          });
                      }
                  })
@@ -143,9 +152,14 @@
                                      content: `<i class="fa fa-check-circle Toast-successIcon"></i> <b>${name}:</b> Notification sent.`
                                  });
                                  $state.reload();
+                             } else if (res && res.data && res.data.status && res.data.status === "failed" && res.data.error === "timed out") {
+                                 ngToast.danger({
+                                     content: `<div><i class="fa fa-exclamation-triangle Toast-successIcon"></i> <b>${name}:</b> ${i18n._("Notification timed out.")}</div>`
+                                 });
+                                 $state.reload();
                              } else if (res && res.data && res.data.status && res.data.status === "failed") {
                                  ngToast.danger({
-                                     content: `<i class="fa fa-exclamation-triangle Toast-successIcon"></i> <b>${name}:</b> Notification failed.`
+                                     content: `<div><i class="fa fa-exclamation-triangle Toast-successIcon"></i> <b>${name}:</b> Notification failed.</div><div>${$filter('sanitize')(res.data.error)}</div>`
                                  });
                                  $state.reload();
                              } else if (res && res.data && res.data.status && res.data.status === "pending" && pending_retries > 0) {
@@ -193,7 +207,7 @@
 
                          let reloadListStateParams = null;
 
-                         if($scope.notification_templates.length === 1 && $state.params.notification_template_search && !_.isEmpty($state.params.notification_template_search.page) && $state.params.notification_template_search.page !== '1') {
+                         if($scope.notification_templates.length === 1 && $state.params.notification_template_search && _.has($state, 'params.notification_template_search.page') && $state.params.notification_template_search.page !== '1') {
                              reloadListStateParams = _.cloneDeep($state.params);
                              reloadListStateParams.notification_template_search.page = (parseInt(reloadListStateParams.notification_template_search.page)-1).toString();
                          }

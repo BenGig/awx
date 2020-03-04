@@ -12,7 +12,6 @@ module.exports = {
         const notifications = client.page.notificationTemplates();
 
         client.useCss();
-        client.resizeWindow(1200, 800);
         client.login();
         client.waitForAngular();
 
@@ -30,11 +29,29 @@ module.exports = {
         notifications.waitForElementVisible('div.spinny');
         notifications.waitForElementNotVisible('div.spinny');
 
-        notifications.expect.element(`#notification_templates_table tr[id="${data.notification.id}"]`).visible;
+        notifications.expect.element(`#notification_templates_table .List-tableRow[id="${data.notification.id}"]`).visible;
         notifications.expect.element('i[class*="copy"]').visible;
         notifications.expect.element('i[class*="copy"]').enabled;
 
         notifications.click('i[class*="copy"]');
+        notifications.waitForElementVisible('div.spinny');
+        notifications.waitForElementNotVisible('div.spinny');
+
+        const activityStream = 'bread-crumb > div i[class$="icon-activity-stream"]';
+        const activityRow = '#activities_table .List-tableCell[class*="description-column"] a';
+        const toast = 'div[class="Toast-icon"]';
+
+        notifications.waitForElementNotPresent(toast);
+        notifications.expect.element(activityStream).visible;
+        notifications.expect.element(activityStream).enabled;
+        notifications.click(activityStream);
+        notifications.waitForElementVisible('div.spinny');
+        notifications.waitForElementNotVisible('div.spinny');
+
+        client
+            .waitForElementVisible(activityRow)
+            .click(activityRow);
+
         notifications.waitForElementVisible('div.spinny');
         notifications.waitForElementNotVisible('div.spinny');
 

@@ -18,7 +18,7 @@ export default ['i18n', function(i18n){
             name: {
                 key: true,
                 label: i18n._('Name'),
-                columnClass: 'col-md-3 col-sm-9 col-xs-9',
+                columnClass: 'col-md-4 col-sm-9 col-xs-9',
                 modalColumnClass: 'col-md-8',
                 awToolTip: '{{inventory_script.description | sanitize}}',
                 dataPlacement: 'top'
@@ -29,7 +29,7 @@ export default ['i18n', function(i18n){
                 sourceModel: 'organization',
                 sourceField: 'name',
                 excludeModal: true,
-                columnClass: 'col-md-3 hidden-sm hidden-xs'
+                columnClass: 'd-none d-md-flex col-md-4'
             }
         },
 
@@ -38,15 +38,15 @@ export default ['i18n', function(i18n){
                 mode: 'all', // One of: edit, select, all
                 ngClick: 'addCustomInv()',
                 awToolTip: i18n._('Create a new custom inventory'),
-                actionClass: 'btn List-buttonSubmit',
-                buttonContent: '&#43; ' + i18n._('ADD'),
+                actionClass: 'at-Button--add',
+                actionId: 'button-add',
                 ngShow: 'canAdd'
             }
         },
 
         fieldActions: {
 
-            columnClass: 'col-md-2 col-sm-3 col-xs-3',
+            columnClass: 'col-md-4 col-sm-3 col-xs-3',
 
             edit: {
                 ngClick: "editCustomInv(inventory_script.id)",
@@ -61,9 +61,9 @@ export default ['i18n', function(i18n){
                 label: i18n._('Copy'),
                 ngClick: 'copyCustomInv(inventory_script)',
                 "class": 'btn-danger btn-xs',
-                awToolTip: i18n._('Copy inventory scruot'),
+                awToolTip: i18n._('Copy inventory script'),
                 dataPlacement: 'top',
-                ngShow: 'inventory_script.summary_fields.user_capabilities.edit'
+                ngShow: 'inventory_script.summary_fields.user_capabilities.copy'
             },
             view: {
                 ngClick: "editCustomInv(inventory_script.id)",

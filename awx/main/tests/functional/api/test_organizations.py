@@ -7,10 +7,9 @@ import os
 from backports.tempfile import TemporaryDirectory
 from django.conf import settings
 import pytest
-import mock
 
 # AWX
-from awx.main.models import * # noqa
+from awx.main.models import ProjectUpdate
 from awx.api.versioning import reverse
 
 
@@ -38,14 +37,14 @@ def create_project_update_factory(organization, project):
 
 @pytest.fixture
 def organization_jobs_successful(create_job_factory, create_project_update_factory):
-    return [create_job_factory(status='successful') for i in xrange(0, 2)] + \
-        [create_project_update_factory(status='successful') for i in xrange(0, 2)]
+    return [create_job_factory(status='successful') for i in range(0, 2)] + \
+        [create_project_update_factory(status='successful') for i in range(0, 2)]
 
 
 @pytest.fixture
 def organization_jobs_running(create_job_factory, create_project_update_factory):
-    return [create_job_factory(status='running') for i in xrange(0, 2)] + \
-        [create_project_update_factory(status='running') for i in xrange(0, 2)]
+    return [create_job_factory(status='running') for i in range(0, 2)] + \
+        [create_project_update_factory(status='running') for i in range(0, 2)]
 
 
 @pytest.mark.django_db
@@ -134,7 +133,6 @@ def test_organization_inventory_list(organization, inventory_factory, get, alice
 
 
 @pytest.mark.django_db
-@mock.patch('awx.api.views.feature_enabled', lambda feature: True)
 def test_create_organization(post, admin, alice):
     new_org = {
         'name': 'new org',
@@ -146,7 +144,6 @@ def test_create_organization(post, admin, alice):
 
 
 @pytest.mark.django_db
-@mock.patch('awx.api.views.feature_enabled', lambda feature: True)
 def test_create_organization_xfail(post, alice):
     new_org = {
         'name': 'new org',
@@ -200,27 +197,47 @@ def test_update_organization(get, put, organization, alice, bob):
 
 
 @pytest.mark.django_db
-@mock.patch('awx.main.access.BaseAccess.check_license', lambda *a, **kw: True)
+def test_update_organization_max_hosts(get, put, organization, admin, alice, bob):
+    # Admin users can get and update max_hosts
+    data = get(reverse('api:organization_detail', kwargs={'pk': organization.id}), user=admin, expect=200).data
+    assert organization.max_hosts == 0
+    data['max_hosts'] = 3
+    put(reverse('api:organization_detail', kwargs={'pk': organization.id}), data, user=admin, expect=200)
+    organization.refresh_from_db()
+    assert organization.max_hosts == 3
+
+    # Organization admins can get the data and can update other fields, but not max_hosts
+    organization.admin_role.members.add(alice)
+    data = get(reverse('api:organization_detail', kwargs={'pk': organization.id}), user=alice, expect=200).data
+    data['max_hosts'] = 5
+    put(reverse('api:organization_detail', kwargs={'pk': organization.id}), data, user=alice, expect=400)
+    organization.refresh_from_db()
+    assert organization.max_hosts == 3
+
+    # Ordinary users shouldn't be able to update either.
+    put(reverse('api:organization_detail', kwargs={'pk': organization.id}), data, user=bob, expect=403)
+    organization.refresh_from_db()
+    assert organization.max_hosts == 3
+
+
+@pytest.mark.django_db
 def test_delete_organization(delete, organization, admin):
     delete(reverse('api:organization_detail', kwargs={'pk': organization.id}), user=admin, expect=204)
 
 
 @pytest.mark.django_db
-@mock.patch('awx.main.access.BaseAccess.check_license', lambda *a, **kw: True)
 def test_delete_organization2(delete, organization, alice):
     organization.admin_role.members.add(alice)
     delete(reverse('api:organization_detail', kwargs={'pk': organization.id}), user=alice, expect=204)
 
 
 @pytest.mark.django_db
-@mock.patch('awx.main.access.BaseAccess.check_license', lambda *a, **kw: True)
 def test_delete_organization_xfail1(delete, organization, alice):
     organization.member_role.members.add(alice)
     delete(reverse('api:organization_detail', kwargs={'pk': organization.id}), user=alice, expect=403)
 
 
 @pytest.mark.django_db
-@mock.patch('awx.main.access.BaseAccess.check_license', lambda *a, **kw: True)
 def test_delete_organization_xfail2(delete, organization):
     delete(reverse('api:organization_detail', kwargs={'pk': organization.id}), user=None, expect=401)
 
@@ -260,16 +277,14 @@ def test_organization_delete(delete, admin, organization, organization_jobs_succ
 @pytest.mark.django_db
 def test_organization_delete_with_active_jobs(delete, admin, organization, organization_jobs_running):
     def sort_keys(x):
-        return (x['type'], x['id'])
+        return (x['type'], str(x['id']))
 
     url = reverse('api:organization_detail', kwargs={'pk': organization.id})
     resp = delete(url, None, user=admin, expect=409)
 
-    expect_transformed = [dict(id=str(j.id), type=j.model_to_str()) for j in organization_jobs_running]
+    expect_transformed = [dict(id=j.id, type=j.model_to_str()) for j in organization_jobs_running]
     resp_sorted = sorted(resp.data['active_jobs'], key=sort_keys)
     expect_sorted = sorted(expect_transformed, key=sort_keys)
 
     assert resp.data['error'] == u"Resource is being used by running jobs."
     assert resp_sorted == expect_sorted
-
-

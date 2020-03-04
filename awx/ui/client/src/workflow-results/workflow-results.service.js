@@ -5,13 +5,15 @@
 *************************************************/
 
 
-export default ['$q', 'Prompt', '$filter', 'Wait', 'Rest', '$state', 'ProcessErrors', 'InitiatePlaybookRun', '$interval', 'moment', function ($q, Prompt, $filter, Wait, Rest, $state, ProcessErrors, InitiatePlaybookRun, $interval, moment) {
+export default ['i18n', 'Prompt', '$filter', 'Wait', 'Rest', '$state', 'ProcessErrors', 'WorkflowJobModel', '$interval', 'moment', 'ComponentsStrings', function (i18n, Prompt, $filter, Wait, Rest, $state, ProcessErrors, WorkflowJob, $interval, moment, strings) {
     var val = {
         getCounts: function(workflowNodes){
             var nodeArr = [];
             workflowNodes.forEach(node => {
                 if(node && node.summary_fields && node.summary_fields.job && node.summary_fields.job.status){
                     nodeArr.push(node.summary_fields.job.status);
+                } else if (_.has(node, 'job.status')) {
+                    nodeArr.push(node.job.status);
                 }
             });
             // use the workflow nodes data populate above to get the count
@@ -34,10 +36,10 @@ export default ['$q', 'Prompt', '$filter', 'Wait', 'Rest', '$state', 'ProcessErr
         },
         deleteJob: function(workflow) {
             Prompt({
-                hdr: 'Delete Job',
+                hdr: i18n._('Delete Job'),
                 resourceName: `#${workflow.id} ` + $filter('sanitize')(workflow.name),
                 body: `<div class='Prompt-bodyQuery'>
-                        Are you sure you want to delete this workflow?
+                        ${i18n._('Are you sure you want to delete this workflow?')}
                     </div>`,
                 action: function() {
                     Wait('start');
@@ -52,13 +54,12 @@ export default ['$q', 'Prompt', '$filter', 'Wait', 'Rest', '$state', 'ProcessErr
                             Wait('stop');
                             $('#prompt-modal').modal('hide');
                             ProcessErrors(null, obj, status, null, {
-                                hdr: 'Error!',
-                                msg: `Could not delete job.
-                                    Returned status: ${status}`
+                                hdr: i18n._('Error!'),
+                                msg: `${i18n._('Could not delete job.  Returned status: ' + status)}`
                             });
                         });
                 },
-                actionText: 'DELETE'
+                actionText: i18n._('DELETE')
             });
         },
         cancelJob: function(workflow) {
@@ -73,18 +74,17 @@ export default ['$q', 'Prompt', '$filter', 'Wait', 'Rest', '$state', 'ProcessErr
                         Wait('stop');
                         $('#prompt-modal').modal('hide');
                         ProcessErrors(null, obj, status, null, {
-                            hdr: 'Error!',
-                            msg: `Could not cancel workflow.
-                                Returned status: ${status}`
+                            hdr: i18n._('Error!'),
+                            msg: `${i18n._('Could not cancel workflow.  Returned status: ' + status)}`
                         });
                     });
             };
 
             Prompt({
-                hdr: 'Cancel Workflow',
+                hdr: i18n._('Cancel Workflow'),
                 resourceName: `#${workflow.id} ${$filter('sanitize')(workflow.name)}`,
                 body: `<div class='Prompt-bodyQuery'>
-                        Are you sure you want to cancel this workflow job?
+                        ${i18n._('Are you sure you want to cancel this workflow job?')}
                     </div>`,
                 action: function() {
                     Wait('start');
@@ -96,19 +96,28 @@ export default ['$q', 'Prompt', '$filter', 'Wait', 'Rest', '$state', 'ProcessErr
                             } else {
                                 $('#prompt-modal').modal('hide');
                                 ProcessErrors(null, data, null, null, {
-                                    hdr: 'Error!',
-                                    msg: `Job has completed,
-                                        unabled to be canceled.`
+                                    hdr: i18n._('Error!'),
+                                    msg: `${i18n._('Job has completed.  Unable to be canceled.')}`
                                 });
                             }
                         });
                 },
-                actionText: 'PROCEED'
+                actionText: i18n._('PROCEED')
             });
         },
         relaunchJob: function(scope) {
-            InitiatePlaybookRun({ scope: scope, id: scope.workflow.id,
-                relaunch: true, job_type: 'workflow_job' });
+            const workflowJob = new WorkflowJob();
+
+            workflowJob.postRelaunch({
+                id: scope.workflow.id
+            }).then((launchRes) => {
+                $state.go('workflowResults', { id: launchRes.data.id }, { reload: true });
+            }).catch(({ data, status, config }) => {
+                ProcessErrors(scope, data, status, null, {
+                    hdr: strings.get('error.HEADER'),
+                    msg: strings.get('error.CALL', { path: `${config.url}`, status })
+                });
+            });
         },
         createOneSecondTimer: function(startTime, fn) {
             return $interval(function(){
@@ -122,7 +131,7 @@ export default ['$q', 'Prompt', '$filter', 'Wait', 'Rest', '$state', 'ProcessErr
                 return true;
             }
             return false;
-        },
+        }
     };
     return val;
 }];

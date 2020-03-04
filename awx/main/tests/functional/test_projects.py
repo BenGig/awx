@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 
-import mock # noqa
+from unittest import mock # noqa
 import pytest
 
 from awx.api.versioning import reverse
@@ -175,13 +175,6 @@ def test_team_project_list(get, team_project_list):
     assert get(reverse('api:user_projects_list', kwargs={'pk':admin.pk,}), alice).data['count'] == 2
 
 
-@pytest.mark.django_db
-def test_team_project_list_fail1(get, team_project_list):
-    objects = team_project_list
-    res = get(reverse('api:team_projects_list', kwargs={'pk':objects.teams.team2.pk,}), objects.users.alice)
-    assert res.status_code == 403
-
-
 @pytest.mark.parametrize("u,expected_status_code", [
     ('rando', 403),
     ('org_member', 403),
@@ -207,6 +200,25 @@ def test_create_project(post, organization, org_admin, org_member, admin, rando,
     assert result.status_code == expected_status_code
     if expected_status_code == 201:
         assert Project.objects.filter(name='Project', organization=organization).exists()
+
+
+@pytest.mark.django_db
+def test_project_credential_protection(post, put, project, organization, scm_credential, org_admin):
+    project.save()
+    project.admin_role.members.add(org_admin)
+    put(
+        reverse('api:project_detail', kwargs={'pk':project.id}), {
+            'name': 'should not change',
+            'credential': scm_credential.id
+        }, org_admin, expect=403
+    )
+    post(
+        reverse('api:project_list'), { 
+            'name': 'should not create', 
+            'organization':organization.id, 
+            'credential': scm_credential.id
+        }, org_admin, expect=403
+    )
 
 
 @pytest.mark.django_db()

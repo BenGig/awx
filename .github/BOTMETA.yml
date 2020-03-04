@@ -1,3 +1,4 @@
+---
 files:
     awx/ui/:
         labels: component:ui
@@ -12,5 +13,5 @@ files:
         labels: component:installer
 
 macros:
-    team_api: wwitzel3 matburt chrismeyersfsu cchurch AlanCoding ryanpetrello jangstur
-    team_ui: jlmitch5 jaredevantabor mabashian gconsidine marshmalien benthomasson
+    team_api: wwitzel3 matburt chrismeyersfsu cchurch AlanCoding ryanpetrello rooftopcellist
+    team_ui: jlmitch5 jaredevantabor mabashian marshmalien benthomasson jakemcdermott

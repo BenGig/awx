@@ -73,8 +73,6 @@ export default ['$scope', 'ListDefinition', '$rootScope', 'GetBasePath',
                     $scope.hostsSelected = null;
                 }
             }
-
-            $scope.systemTrackingDisabled = ($scope.hostsSelected && $scope.hostsSelected.length > 2) ? true : false;
         });
 
     }
@@ -112,7 +110,7 @@ export default ['$scope', 'ListDefinition', '$rootScope', 'GetBasePath',
 
                 let reloadListStateParams = null;
 
-                if($scope.hosts.length === 1 && $state.params.host_search && !_.isEmpty($state.params.host_search.page) && $state.params.host_search.page !== '1') {
+                if($scope.hosts.length === 1 && $state.params.host_search && _.has($state, 'params.host_search.page') && $state.params.host_search.page !== '1') {
                     reloadListStateParams = _.cloneDeep($state.params);
                     reloadListStateParams.host_search.page = (parseInt(reloadListStateParams.host_search.page)-1).toString();
                 }
@@ -127,10 +125,10 @@ export default ['$scope', 'ListDefinition', '$rootScope', 'GetBasePath',
         };
         // Prompt depends on having $rootScope.promptActionBtnClass available...
         Prompt({
-            hdr: 'Delete Host',
+            hdr: i18n._('Delete Host'),
             body: body,
             action: action,
-            actionText: 'DELETE',
+            actionText: i18n._('DELETE'),
         });
         $rootScope.promptActionBtnClass = 'Modal-errorButton';
     };
@@ -151,15 +149,6 @@ export default ['$scope', 'ListDefinition', '$rootScope', 'GetBasePath',
 
     $scope.smartInventory = function() {
         $state.go('inventories.addSmartInventory');
-    };
-
-    $scope.systemTracking = function(){
-        var hostIds = _.map($scope.hostsSelected, (host) => host.id);
-        $state.go('systemTracking', {
-            inventoryId: $state.params.inventory_id ? $state.params.inventory_id : $state.params.smartinventory_id,
-            hosts: $scope.hostsSelected,
-            hostIds: hostIds
-        });
     };
 
     $scope.setAdhocPattern = function(){

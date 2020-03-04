@@ -4,29 +4,95 @@
  * All Rights Reserved
  *************************************************/
 
-export default ['$state', '$stateParams', '$scope', 'SourcesFormDefinition',
-    'ParseTypeChange', 'GenerateForm', 'inventoryData', 'GroupsService',
-    'GetChoices', 'GetBasePath', 'CreateSelect2', 'GetSourceTypeOptions',
-    'rbacUiControlService', 'ToJSON', 'SourcesService', 'Empty',
-    'Wait', 'Rest', 'Alert', 'ProcessErrors', 'inventorySourcesOptions',
-    '$rootScope', 'i18n',
-    function($state, $stateParams, $scope, SourcesFormDefinition,  ParseTypeChange,
-        GenerateForm, inventoryData, GroupsService, GetChoices,
-        GetBasePath, CreateSelect2, GetSourceTypeOptions, rbacUiControlService,
-        ToJSON, SourcesService, Empty, Wait, Rest, Alert, ProcessErrors,
-        inventorySourcesOptions,$rootScope, i18n) {
+export default ['$state', 'ConfigData', '$scope', 'SourcesFormDefinition', 'ParseTypeChange', 
+    'GenerateForm', 'inventoryData', 'GetChoices', 
+    'GetBasePath', 'CreateSelect2', 'GetSourceTypeOptions',
+    'SourcesService', 'Empty', 'Wait', 'Rest', 'Alert', 'ProcessErrors', 
+    'inventorySourcesOptions', '$rootScope', 'i18n', 'InventorySourceModel', 'InventoryHostsStrings',
+    function($state, ConfigData, $scope, SourcesFormDefinition,  ParseTypeChange,
+        GenerateForm, inventoryData, GetChoices,
+        GetBasePath, CreateSelect2, GetSourceTypeOptions,
+        SourcesService, Empty, Wait, Rest, Alert, ProcessErrors,
+        inventorySourcesOptions,$rootScope, i18n, InventorySource, InventoryHostsStrings) {
 
         let form = SourcesFormDefinition;
-        init();
+        $scope.mode = 'add';
+        // apply form definition's default field values
+        GenerateForm.applyDefaults(form, $scope, true);
+        $scope.canAdd = inventorySourcesOptions.actions.POST;
+        $scope.envParseType = 'yaml';
+        const virtualEnvs = ConfigData.custom_virtualenvs || [];
+        $scope.custom_virtualenvs_options = virtualEnvs;
 
-        function init() {
-            $scope.mode = 'add';
-            // apply form definition's default field values
-            GenerateForm.applyDefaults(form, $scope, true);
-            $scope.canAdd = inventorySourcesOptions.actions.POST;
-            $scope.envParseType = 'yaml';
-            initSources();
-        }
+        GetChoices({
+            scope: $scope,
+            field: 'source_regions',
+            variable: 'rax_regions',
+            choice_name: 'rax_region_choices',
+            options: inventorySourcesOptions
+        });
+
+        GetChoices({
+            scope: $scope,
+            field: 'source_regions',
+            variable: 'ec2_regions',
+            choice_name: 'ec2_region_choices',
+            options: inventorySourcesOptions
+        });
+
+        GetChoices({
+            scope: $scope,
+            field: 'source_regions',
+            variable: 'gce_regions',
+            choice_name: 'gce_region_choices',
+            options: inventorySourcesOptions
+        });
+
+        GetChoices({
+            scope: $scope,
+            field: 'source_regions',
+            variable: 'azure_regions',
+            choice_name: 'azure_rm_region_choices',
+            options: inventorySourcesOptions
+        });
+
+        // Load options for group_by
+        GetChoices({
+            scope: $scope,
+            field: 'group_by',
+            variable: 'ec2_group_by',
+            choice_name: 'ec2_group_by_choices',
+            options: inventorySourcesOptions
+        });
+
+        initRegionSelect();
+
+        GetChoices({
+            scope: $scope,
+            field: 'verbosity',
+            variable: 'verbosity_options',
+            options: inventorySourcesOptions
+        });
+
+        CreateSelect2({
+            element: '#inventory_source_verbosity',
+            multiple: false
+        });
+
+        $scope.verbosity = $scope.verbosity_options[1];
+
+        CreateSelect2({
+            element: '#inventory_source_custom_virtualenv',
+            multiple: false,
+            opts: $scope.custom_virtualenvs_options
+        });
+
+        GetSourceTypeOptions({
+            scope: $scope,
+            variable: 'source_type_options'
+        });
+
+        const inventorySource = new InventorySource();
 
         var getInventoryFiles = function (project) {
             var url;
@@ -39,7 +105,14 @@ export default ['$state', '$stateParams', '$scope', 'SourcesFormDefinition',
                     .then(({data}) => {
                         $scope.inventory_files = data;
                         $scope.inventory_files.push("/ (project root)");
-                        sync_inventory_file_select2();
+                        CreateSelect2({
+                            element:'#inventory-file-select',
+                            addNew: true,
+                            multiple: false,
+                            scope: $scope,
+                            options: 'inventory_files',
+                            model: 'inventory_file'
+                        });
                         Wait('stop');
                     })
                     .catch(() => {
@@ -59,37 +132,37 @@ export default ['$state', '$stateParams', '$scope', 'SourcesFormDefinition',
             }
         });
 
-        function sync_inventory_file_select2() {
-            CreateSelect2({
-                element:'#inventory-file-select',
-                addNew: true,
-                multiple: false,
-                scope: $scope,
-                options: 'inventory_files',
-                model: 'inventory_file'
-            });
-        }
-
         $scope.lookupCredential = function(){
-            if($scope.source.value !== "scm" && $scope.source.value !== "custom") {
-                let kind = ($scope.source.value === "ec2") ? "aws" : $scope.source.value;
-                $state.go('.credential', {
-                    credential_search: {
-                        kind: kind,
-                        page_size: '5',
-                        page: '1'
-                    }
-                });
+            // For most source type selections, we filter for 1-1 matches to credential_type namespace.
+            let searchKey = 'credential_type__namespace';
+            let searchValue = $scope.source.value;
+
+            // SCM and custom source types are more generic in terms of the credentials they
+            // accept - any cloud or user-defined credential type can be used. We filter for
+            // these using the credential_type kind field, which categorizes all cloud and
+            // user-defined credentials as 'cloud'.
+            if ($scope.source.value === 'scm') {
+                searchKey = 'credential_type__kind';
+                searchValue = 'cloud';
             }
-            else {
-                $state.go('.credential', {
-                    credential_search: {
-                        credential_type__kind: "cloud",
-                        page_size: '5',
-                        page: '1'
-                    }
-                });
+
+            if ($scope.source.value === 'custom') {
+                searchKey = 'credential_type__kind';
+                searchValue = 'cloud';
             }
+
+            // When the selection is 'ec2' we actually want to filter for the 'aws' namespace.
+            if ($scope.source.value === 'ec2') {
+                searchValue = 'aws';
+            }
+
+            $state.go('.credential', {
+                credential_search: {
+                    [searchKey]: searchValue,
+                    page_size: '5',
+                    page: '1'
+                }
+            });
         };
 
         $scope.lookupProject = function(){
@@ -107,9 +180,9 @@ export default ['$state', '$stateParams', '$scope', 'SourcesFormDefinition',
                 $scope.credentialBasePath = GetBasePath('credentials') + '?credential_type__kind__in=cloud,network';
             }
             else{
-                $scope.credentialBasePath = (source === 'ec2') ? GetBasePath('credentials') + '?kind=aws' : GetBasePath('credentials') + (source === '' ? '' : '?kind=' + (source));
+                $scope.credentialBasePath = (source === 'ec2') ? GetBasePath('credentials') + '?credential_type__namespace=aws' : GetBasePath('credentials') + (source === '' ? '' : '?credential_type__namespace=' + (source));
             }
-            if (source === 'ec2' || source === 'custom' || source === 'vmware' || source === 'openstack' || source === 'scm' || source === 'cloudforms' || source === "satellite6") {
+            if (source === 'ec2' || source === 'custom' || source === 'vmware' || source === 'openstack' || source === 'scm' || source === 'cloudforms' || source === "satellite6" || source === "azure_rm") {
                 $scope.envParseType = 'yaml';
 
                 var varName;
@@ -130,10 +203,6 @@ export default ['$state', '$stateParams', '$scope', 'SourcesFormDefinition',
 
             if (source === 'scm') {
                 $scope.projectBasePath = GetBasePath('projects')  + '?not__status=never updated';
-                $scope.overwrite_vars = true;
-                $scope.inventory_source_form.inventory_file.$setPristine();
-            } else {
-                $scope.overwrite_vars = false;
             }
 
             // reset fields
@@ -146,12 +215,16 @@ export default ['$state', '$stateParams', '$scope', 'SourcesFormDefinition',
             $scope.credential_name = null;
             $scope.group_by = null;
             $scope.group_by_choices = [];
+            $scope.overwrite_vars = false;
             initRegionSelect();
         };
         // region / source options callback
 
         $scope.$on('sourceTypeOptionsReady', function() {
-            initSourceSelect();
+            CreateSelect2({
+                element: '#inventory_source_source',
+                multiple: false
+            });
         });
 
         function initRegionSelect(){
@@ -160,10 +233,6 @@ export default ['$state', '$stateParams', '$scope', 'SourcesFormDefinition',
                 multiple: true
             });
 
-            initGroupBySelect();
-        }
-
-        function initGroupBySelect(){
             let add_new = false;
             if( _.get($scope, 'source') === 'ec2' || _.get($scope.source, 'value') === 'ec2') {
                 $scope.group_by_choices = $scope.ec2_group_by;
@@ -209,81 +278,6 @@ export default ['$state', '$stateParams', '$scope', 'SourcesFormDefinition',
             });
         }
 
-        function initSourceSelect(){
-            CreateSelect2({
-                element: '#inventory_source_source',
-                multiple: false
-            });
-        }
-
-        function initVerbositySelect(){
-            CreateSelect2({
-                element: '#inventory_source_verbosity',
-                multiple: false
-            });
-
-            $scope.verbosity = $scope.verbosity_options[1];
-        }
-
-        function initSources(){
-            GetChoices({
-                scope: $scope,
-                field: 'source_regions',
-                variable: 'rax_regions',
-                choice_name: 'rax_region_choices',
-                options: inventorySourcesOptions
-            });
-
-            GetChoices({
-                scope: $scope,
-                field: 'source_regions',
-                variable: 'ec2_regions',
-                choice_name: 'ec2_region_choices',
-                options: inventorySourcesOptions
-            });
-
-            GetChoices({
-                scope: $scope,
-                field: 'source_regions',
-                variable: 'gce_regions',
-                choice_name: 'gce_region_choices',
-                options: inventorySourcesOptions
-            });
-
-            GetChoices({
-                scope: $scope,
-                field: 'source_regions',
-                variable: 'azure_regions',
-                choice_name: 'azure_rm_region_choices',
-                options: inventorySourcesOptions
-            });
-
-            // Load options for group_by
-            GetChoices({
-                scope: $scope,
-                field: 'group_by',
-                variable: 'ec2_group_by',
-                choice_name: 'ec2_group_by_choices',
-                options: inventorySourcesOptions
-            });
-
-            initRegionSelect();
-
-            GetChoices({
-                scope: $scope,
-                field: 'verbosity',
-                variable: 'verbosity_options',
-                options: inventorySourcesOptions
-            });
-
-            initVerbositySelect();
-
-            GetSourceTypeOptions({
-                scope: $scope,
-                variable: 'source_type_options'
-            });
-        }
-
         $scope.formCancel = function() {
             $state.go('^');
         };
@@ -303,9 +297,10 @@ export default ['$state', '$stateParams', '$scope', 'SourcesFormDefinition',
                 update_on_launch: $scope.update_on_launch,
                 verbosity: $scope.verbosity.value,
                 update_cache_timeout: $scope.update_cache_timeout || 0,
+                custom_virtualenv: $scope.custom_virtualenv || null,
                 // comma-delimited strings
                 group_by: SourcesService.encodeGroupBy($scope.source, $scope.group_by),
-                source_regions: _.map($scope.source_regions, 'value').join(',')
+                source_regions: _.map($scope.source_regions, 'value').join(','),
             };
 
             if ($scope.source) {
@@ -325,9 +320,17 @@ export default ['$state', '$stateParams', '$scope', 'SourcesFormDefinition',
             } else {
                 params.source = null;
             }
-            SourcesService.post(params).then((response) => {
+
+            inventorySource.request('post', {
+                data: params
+            }).then((response) => {
                 let inventory_source_id = response.data.id;
                 $state.go('^.edit', {inventory_source_id: inventory_source_id}, {reload: true});
+            }).catch(({ data, status, config }) => {
+                ProcessErrors($scope, data, status, null, {
+                    hdr: 'Error!',
+                    msg: InventoryHostsStrings.get('error.CALL', { path: `${config.url}`, status })
+                });
             });
         };
     }

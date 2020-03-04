@@ -1,12 +1,13 @@
+# -*- coding: utf-8 -*-
+
 import base64
 import hashlib
 import logging
 from collections import namedtuple
 
-import six
 from cryptography.fernet import Fernet, InvalidToken
 from cryptography.hazmat.backends import default_backend
-from django.utils.encoding import smart_str
+from django.utils.encoding import smart_str, smart_bytes
 
 
 __all__ = ['get_encryption_key',
@@ -36,7 +37,7 @@ class Fernet256(Fernet):
         self._backend = backend
 
 
-def get_encryption_key(field_name, pk=None):
+def get_encryption_key(field_name, pk=None, secret_key=None):
     '''
     Generate key for encrypted password based on field name,
     ``settings.SECRET_KEY``, and instance pk (if available).
@@ -47,41 +48,84 @@ def get_encryption_key(field_name, pk=None):
     '''
     from django.conf import settings
     h = hashlib.sha512()
-    h.update(settings.SECRET_KEY)
+    h.update(smart_bytes(secret_key or settings.SECRET_KEY))
     if pk is not None:
-        h.update(str(pk))
-    h.update(field_name)
+        h.update(smart_bytes(str(pk)))
+    h.update(smart_bytes(field_name))
     return base64.urlsafe_b64encode(h.digest())
 
 
-def encrypt_value(value, pk=None):
+def encrypt_value(value, pk=None, secret_key=None):
+    #
+    # ⚠️  D-D-D-DANGER ZONE ⚠️
+    #
+    # !!! BEFORE USING THIS FUNCTION PLEASE READ encrypt_field !!!
+    #
     TransientField = namedtuple('TransientField', ['pk', 'value'])
-    return encrypt_field(TransientField(pk=pk, value=value), 'value')
+    return encrypt_field(TransientField(pk=pk, value=value), 'value', secret_key=secret_key)
 
 
-def encrypt_field(instance, field_name, ask=False, subfield=None, skip_utf8=False):
+def encrypt_field(instance, field_name, ask=False, subfield=None, secret_key=None):
+    #
+    # ⚠️  D-D-D-DANGER ZONE ⚠️
+    #
+    # !!! PLEASE READ BEFORE USING THIS FUNCTION ANYWHERE !!!
+    #
+    # You should know that this function is used in various places throughout
+    # AWX for symmetric encryption - generally it's used to encrypt sensitive
+    # values that we store in the AWX database (such as SSH private keys for
+    # credentials).
+    #
+    # If you're reading this function's code because you're thinking about
+    # using it to encrypt *something new*, please remember that AWX has
+    # official support for *regenerating* the SECRET_KEY (on which the
+    # symmetric key is based):
+    #
+    # $ awx-manage regenerate_secret_key
+    # $ setup.sh -k
+    #
+    # ...so you'll need to *also* add code to support the
+    # migration/re-encryption of these values (the code in question lives in
+    # `awx.main.management.commands.regenerate_secret_key`):
+    #
+    # For example, if you find that you're adding a new database column that is
+    # encrypted, in addition to calling `encrypt_field` in the appropriate
+    # places, you would also need to update the `awx-manage regenerate_secret_key`
+    # so that values are properly migrated when the SECRET_KEY changes.
+    #
+    # This process *generally* involves adding Python code to the
+    # `regenerate_secret_key` command, i.e.,
+    #
+    # 1.  Query the database for existing encrypted values on the appropriate object(s)
+    # 2.  Decrypting them using the *old* SECRET_KEY
+    # 3.  Storing newly encrypted values using the *newly generated* SECRET_KEY
+    #
     '''
     Return content of the given instance and field name encrypted.
     '''
-    value = getattr(instance, field_name)
+    try:
+        value = instance.inputs[field_name]
+    except (TypeError, AttributeError):
+        value = getattr(instance, field_name)
+    except KeyError:
+        raise AttributeError(field_name)
+
     if isinstance(value, dict) and subfield is not None:
         value = value[subfield]
+    if value is None:
+        return None
+    value = smart_str(value)
     if not value or value.startswith('$encrypted$') or (ask and value == 'ASK'):
         return value
-    if skip_utf8:
-        utf8 = False
-    else:
-        utf8 = type(value) == six.text_type
-    value = smart_str(value)
-    key = get_encryption_key(field_name, getattr(instance, 'pk', None))
+    key = get_encryption_key(
+        field_name,
+        getattr(instance, 'pk', None),
+        secret_key=secret_key
+    )
     f = Fernet256(key)
-    encrypted = f.encrypt(value)
-    b64data = base64.b64encode(encrypted)
-    tokens = ['$encrypted', 'AESCBC', b64data]
-    if utf8:
-        # If the value to encrypt is utf-8, we need to add a marker so we
-        # know to decode the data when it's decrypted later
-        tokens.insert(1, 'UTF8')
+    encrypted = f.encrypt(smart_bytes(value))
+    b64data = smart_str(base64.b64encode(encrypted))
+    tokens = ['$encrypted', 'UTF8', 'AESCBC', b64data]
     return '$'.join(tokens)
 
 
@@ -97,25 +141,33 @@ def decrypt_value(encryption_key, value):
     encrypted = base64.b64decode(b64data)
     f = Fernet256(encryption_key)
     value = f.decrypt(encrypted)
-    # If the encrypted string contained a UTF8 marker, decode the data
-    if utf8:
-        value = value.decode('utf-8')
-    return value
+    return smart_str(value)
 
 
-def decrypt_field(instance, field_name, subfield=None):
+def decrypt_field(instance, field_name, subfield=None, secret_key=None):
     '''
     Return content of the given instance and field name decrypted.
     '''
-    value = getattr(instance, field_name)
+    try:
+        value = instance.inputs[field_name]
+    except (TypeError, AttributeError):
+        value = getattr(instance, field_name)
+    except KeyError:
+        raise AttributeError(field_name)
+
     if isinstance(value, dict) and subfield is not None:
         value = value[subfield]
+    value = smart_str(value)
     if not value or not value.startswith('$encrypted$'):
         return value
-    key = get_encryption_key(field_name, getattr(instance, 'pk', None))
+    key = get_encryption_key(
+        field_name,
+        getattr(instance, 'pk', None),
+        secret_key=secret_key
+    )
 
     try:
-        return decrypt_value(key, value)
+        return smart_str(decrypt_value(key, value))
     except InvalidToken:
         logger.exception(
             "Failed to decrypt `%s(pk=%s).%s`; if you've recently restored from "
@@ -140,6 +192,6 @@ def encrypt_dict(data, fields):
 
 
 def is_encrypted(value):
-    if not isinstance(value, six.string_types):
+    if not isinstance(value, str):
         return False
     return value.startswith('$encrypted$') and len(value) > len('$encrypted$')

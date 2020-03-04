@@ -6,10 +6,10 @@
 
 export default ['$scope', 'Rest', 'CredentialList', 'Prompt', 'ProcessErrors', 'GetBasePath',
         'Wait', '$state', '$filter', 'rbacUiControlService', 'Dataset', 'credentialType', 'i18n',
-        'CredentialModel', 'CredentialsStrings',
+        'CredentialModel', 'CredentialsStrings', 'ngToast',
     function($scope, Rest, CredentialList, Prompt,
     ProcessErrors, GetBasePath, Wait, $state, $filter, rbacUiControlService, Dataset,
-    credentialType, i18n, Credential, CredentialsStrings) {
+    credentialType, i18n, Credential, CredentialsStrings, ngToast) {
 
         const credential = new Credential();
 
@@ -36,11 +36,6 @@ export default ['$scope', 'Rest', 'CredentialList', 'Prompt', 'ProcessErrors', '
 
         $scope.$on(`${list.iterator}_options`, function(event, data){
             $scope.options = data.data.actions.GET;
-            optionsRequestDataProcessing();
-        });
-
-        $scope.$watchCollection(`${$scope.list.name}`, function() {
-            optionsRequestDataProcessing();
         });
 
         function assignCredentialKinds () {
@@ -69,33 +64,25 @@ export default ['$scope', 'Rest', 'CredentialList', 'Prompt', 'ProcessErrors', '
                 });
         }
 
-        // iterate over the list and add fields like type label, after the
-        // OPTIONS request returns, or the list is sorted/paginated/searched
-        function optionsRequestDataProcessing(){
-            if ($scope[list.name] !== undefined) {
-                $scope[list.name].forEach(function(item, item_idx) {
-                    var itm = $scope[list.name][item_idx];
-
-                    // Set the item type label
-                    if (list.fields.kind && $scope.options &&
-                        $scope.options.hasOwnProperty('kind')) {
-                            $scope.options.kind.choices.forEach(function(choice) {
-                                if (choice[0] === item.kind) {
-                                    itm.kind_label = choice[1];
-                                }
-                            });
-                    }
-                });
-            }
-        }
-
         $scope.copyCredential = credential => {
             Wait('start');
             new Credential('get', credential.id)
                 .then(model => model.copy())
-                .then(({ id }) => {
-                    const params = { credential_id: id };
-                    $state.go('credentials.edit', params, { reload: true });
+                .then((copiedCred) => {
+                    ngToast.success({
+                        content: `
+                            <div class="Toast-wrapper">
+                                <div class="Toast-icon">
+                                    <i class="fa fa-check-circle Toast-successIcon"></i>
+                                </div>
+                                <div>
+                                    ${CredentialsStrings.get('SUCCESSFUL_CREATION', copiedCred.name)}
+                                </div>
+                            </div>`,
+                        dismissButton: false,
+                        dismissOnTimeout: true
+                    });
+                    $state.go('.', null, { reload: true });
                 })
                 .catch(({ data, status }) => {
                     const params = { hdr: 'Error!', msg: `Call to copy failed. Return status: ${status}` };
@@ -122,7 +109,7 @@ export default ['$scope', 'Rest', 'CredentialList', 'Prompt', 'ProcessErrors', '
 
                         let reloadListStateParams = null;
 
-                        if($scope.credentials.length === 1 && $state.params.credential_search && !_.isEmpty($state.params.credential_search.page) && $state.params.credential_search.page !== '1') {
+                        if($scope.credentials.length === 1 && $state.params.credential_search && _.has($state, 'params.credential_search.page') && $state.params.credential_search.page !== '1') {
                             reloadListStateParams = _.cloneDeep($state.params);
                             reloadListStateParams.credential_search.page = (parseInt(reloadListStateParams.credential_search.page)-1).toString();
                         }
@@ -165,7 +152,7 @@ export default ['$scope', 'Rest', 'CredentialList', 'Prompt', 'ProcessErrors', '
                         resourceName: $filter('sanitize')(name),
                         body: deleteModalBody,
                         action: action,
-                        actionText: 'DELETE'
+                        actionText: i18n._('DELETE')
                     });
                 });
         };

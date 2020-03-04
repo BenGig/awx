@@ -1,8 +1,10 @@
 import pytest
 
-from awx.api.versioning import reverse
+from django.utils.encoding import smart_str
 
-from awx.main.models import JobTemplate
+from awx.api.versioning import reverse
+from awx.main.models import JobTemplate, Schedule
+from awx.main.utils.encryption import decrypt_value, get_encryption_key
 
 
 RRULE_EXAMPLE = 'DTSTART:20151117T050000Z RRULE:FREQ=DAILY;INTERVAL=1;COUNT=1'
@@ -34,6 +36,30 @@ def test_wfjt_schedule_accepted(post, workflow_job_template, admin_user):
 
 
 @pytest.mark.django_db
+def test_wfjt_unprompted_inventory_rejected(post, workflow_job_template, inventory, admin_user):
+    r = post(
+        url=reverse('api:workflow_job_template_schedules_list', kwargs={'pk': workflow_job_template.id}),
+        data={'name': 'test sch', 'rrule': RRULE_EXAMPLE, 'inventory': inventory.pk},
+        user=admin_user,
+        expect=400
+    )
+    assert r.data['inventory'] == ['Field is not configured to prompt on launch.']
+
+
+@pytest.mark.django_db
+def test_wfjt_unprompted_inventory_accepted(post, workflow_job_template, inventory, admin_user):
+    workflow_job_template.ask_inventory_on_launch = True
+    workflow_job_template.save()
+    r = post(
+        url=reverse('api:workflow_job_template_schedules_list', kwargs={'pk': workflow_job_template.id}),
+        data={'name': 'test sch', 'rrule': RRULE_EXAMPLE, 'inventory': inventory.pk},
+        user=admin_user,
+        expect=201
+    )
+    assert Schedule.objects.get(pk=r.data['id']).inventory == inventory
+
+
+@pytest.mark.django_db
 def test_valid_survey_answer(post, admin_user, project, inventory, survey_spec_factory):
     job_template = JobTemplate.objects.create(
         name='test-jt',
@@ -49,6 +75,50 @@ def test_valid_survey_answer(post, admin_user, project, inventory, survey_spec_f
     url = reverse('api:job_template_schedules_list', kwargs={'pk': job_template.id})
     post(url, {'name': 'test sch', 'rrule': RRULE_EXAMPLE, 'extra_data': '{"var1": 54}'},
          admin_user, expect=201)
+
+
+@pytest.mark.django_db
+def test_encrypted_survey_answer(post, patch, admin_user, project, inventory, survey_spec_factory):
+    job_template = JobTemplate.objects.create(
+        name='test-jt',
+        project=project,
+        playbook='helloworld.yml',
+        inventory=inventory,
+        ask_variables_on_launch=False,
+        survey_enabled=True,
+        survey_spec=survey_spec_factory([{'variable': 'var1', 'type': 'password'}])
+    )
+
+    # test encrypted-on-create
+    url = reverse('api:job_template_schedules_list', kwargs={'pk': job_template.id})
+    r = post(url, {'name': 'test sch', 'rrule': RRULE_EXAMPLE, 'extra_data': '{"var1": "foo"}'},
+             admin_user, expect=201)
+    assert r.data['extra_data']['var1'] == "$encrypted$"
+    schedule = Schedule.objects.get(pk=r.data['id'])
+    assert schedule.extra_data['var1'].startswith('$encrypted$')
+    assert decrypt_value(get_encryption_key('value', pk=None), schedule.extra_data['var1']) == 'foo'
+
+    # test a no-op change
+    r = patch(
+        schedule.get_absolute_url(),
+        data={'extra_data': {'var1': '$encrypted$'}},
+        user=admin_user,
+        expect=200
+    )
+    assert r.data['extra_data']['var1'] == '$encrypted$'
+    schedule.refresh_from_db()
+    assert decrypt_value(get_encryption_key('value', pk=None), schedule.extra_data['var1']) == 'foo'
+
+    # change to a different value
+    r = patch(
+        schedule.get_absolute_url(),
+        data={'extra_data': {'var1': 'bar'}},
+        user=admin_user,
+        expect=200
+    )
+    assert r.data['extra_data']['var1'] == '$encrypted$'
+    schedule.refresh_from_db()
+    assert decrypt_value(get_encryption_key('value', pk=None), schedule.extra_data['var1']) == 'bar'
 
 
 @pytest.mark.django_db
@@ -84,7 +154,13 @@ def test_invalid_rrules(post, admin_user, project, inventory, rrule, error):
         'name': 'Some Schedule',
         'rrule': rrule,
     }, admin_user, expect=400)
-    assert error in resp.content
+    assert error in smart_str(resp.content)
+
+
+@pytest.mark.django_db
+def test_normal_users_can_preview_schedules(post, alice):
+    url = reverse('api:schedule_rrule')
+    post(url, {'rrule': get_rrule()}, alice, expect=200)
 
 
 @pytest.mark.django_db
@@ -92,7 +168,7 @@ def test_utc_preview(post, admin_user):
     url = reverse('api:schedule_rrule')
     r = post(url, {'rrule': get_rrule()}, admin_user, expect=200)
     assert r.data['utc'] == r.data['local']
-    assert map(str, r.data['utc']) == [
+    assert list(map(str, r.data['utc'])) == [
         '2030-03-08 05:00:00+00:00',
         '2030-03-09 05:00:00+00:00',
         '2030-03-10 05:00:00+00:00',
@@ -107,14 +183,14 @@ def test_nyc_with_dst(post, admin_user):
     r = post(url, {'rrule': get_rrule('America/New_York')}, admin_user, expect=200)
 
     # March 10, 2030 is when DST takes effect in NYC
-    assert map(str, r.data['local']) == [
+    assert list(map(str, r.data['local'])) == [
         '2030-03-08 05:00:00-05:00',
         '2030-03-09 05:00:00-05:00',
         '2030-03-10 05:00:00-04:00',
         '2030-03-11 05:00:00-04:00',
         '2030-03-12 05:00:00-04:00',
     ]
-    assert map(str, r.data['utc']) == [
+    assert list(map(str, r.data['utc'])) == [
         '2030-03-08 10:00:00+00:00',
         '2030-03-09 10:00:00+00:00',
         '2030-03-10 09:00:00+00:00',
@@ -131,14 +207,14 @@ def test_phoenix_without_dst(post, admin_user):
     r = post(url, {'rrule': get_rrule('America/Phoenix')}, admin_user, expect=200)
 
     # March 10, 2030 is when DST takes effect in NYC
-    assert map(str, r.data['local']) == [
+    assert list(map(str, r.data['local'])) == [
         '2030-03-08 05:00:00-07:00',
         '2030-03-09 05:00:00-07:00',
         '2030-03-10 05:00:00-07:00',
         '2030-03-11 05:00:00-07:00',
         '2030-03-12 05:00:00-07:00',
     ]
-    assert map(str, r.data['utc']) == [
+    assert list(map(str, r.data['utc'])) == [
         '2030-03-08 12:00:00+00:00',
         '2030-03-09 12:00:00+00:00',
         '2030-03-10 12:00:00+00:00',
@@ -154,14 +230,14 @@ def test_interval_by_local_day(post, admin_user):
     r = post(url, {'rrule': rrule}, admin_user, expect=200)
 
     # March 10, 2030 is when DST takes effect in NYC
-    assert map(str, r.data['local']) == [
+    assert list(map(str, r.data['local'])) == [
         '2030-02-02 21:00:00-05:00',
         '2030-03-02 21:00:00-05:00',
         '2030-04-06 21:00:00-04:00',
         '2030-05-04 21:00:00-04:00',
     ]
 
-    assert map(str, r.data['utc']) == [
+    assert list(map(str, r.data['utc'])) == [
         '2030-02-03 02:00:00+00:00',
         '2030-03-03 02:00:00+00:00',
         '2030-04-07 01:00:00+00:00',
@@ -175,13 +251,13 @@ def test_weekday_timezone_boundary(post, admin_user):
     rrule = 'DTSTART;TZID=America/New_York:20300101T210000 RRULE:FREQ=WEEKLY;BYDAY=TU;INTERVAL=1;COUNT=3'
     r = post(url, {'rrule': rrule}, admin_user, expect=200)
 
-    assert map(str, r.data['local']) == [
+    assert list(map(str, r.data['local'])) == [
         '2030-01-01 21:00:00-05:00',
         '2030-01-08 21:00:00-05:00',
         '2030-01-15 21:00:00-05:00',
     ]
 
-    assert map(str, r.data['utc']) == [
+    assert list(map(str, r.data['utc'])) == [
         '2030-01-02 02:00:00+00:00',
         '2030-01-09 02:00:00+00:00',
         '2030-01-16 02:00:00+00:00',
@@ -194,13 +270,13 @@ def test_first_monthly_weekday_timezone_boundary(post, admin_user):
     rrule = 'DTSTART;TZID=America/New_York:20300101T210000 RRULE:FREQ=MONTHLY;BYDAY=SU;BYSETPOS=1;INTERVAL=1;COUNT=3'
     r = post(url, {'rrule': rrule}, admin_user, expect=200)
 
-    assert map(str, r.data['local']) == [
+    assert list(map(str, r.data['local'])) == [
         '2030-01-06 21:00:00-05:00',
         '2030-02-03 21:00:00-05:00',
         '2030-03-03 21:00:00-05:00',
     ]
 
-    assert map(str, r.data['utc']) == [
+    assert list(map(str, r.data['utc'])) == [
         '2030-01-07 02:00:00+00:00',
         '2030-02-04 02:00:00+00:00',
         '2030-03-04 02:00:00+00:00',
@@ -213,13 +289,13 @@ def test_annual_timezone_boundary(post, admin_user):
     rrule = 'DTSTART;TZID=America/New_York:20301231T230000 RRULE:FREQ=YEARLY;INTERVAL=1;COUNT=3'
     r = post(url, {'rrule': rrule}, admin_user, expect=200)
 
-    assert map(str, r.data['local']) == [
+    assert list(map(str, r.data['local'])) == [
         '2030-12-31 23:00:00-05:00',
         '2031-12-31 23:00:00-05:00',
         '2032-12-31 23:00:00-05:00',
     ]
 
-    assert map(str, r.data['utc']) == [
+    assert list(map(str, r.data['utc'])) == [
         '2031-01-01 04:00:00+00:00',
         '2032-01-01 04:00:00+00:00',
         '2033-01-01 04:00:00+00:00',
@@ -237,12 +313,12 @@ def test_dst_phantom_hour(post, admin_user):
     rrule = 'DTSTART;TZID=America/New_York:20300303T023000 RRULE:FREQ=WEEKLY;BYDAY=SU;INTERVAL=1;COUNT=3'
     r = post(url, {'rrule': rrule}, admin_user, expect=200)
 
-    assert map(str, r.data['local']) == [
+    assert list(map(str, r.data['local'])) == [
         '2030-03-03 02:30:00-05:00',
         '2030-03-17 02:30:00-04:00',  # Skip 3/10 because 3/10 @ 2:30AM isn't a real date
     ]
 
-    assert map(str, r.data['utc']) == [
+    assert list(map(str, r.data['utc'])) == [
         '2030-03-03 07:30:00+00:00',
         '2030-03-17 06:30:00+00:00',  # Skip 3/10 because 3/10 @ 2:30AM isn't a real date
     ]
@@ -255,7 +331,7 @@ def test_months_with_31_days(post, admin_user):
     r = post(url, {'rrule': rrule}, admin_user, expect=200)
 
     # 30 days have September, April, June, and November...
-    assert map(str, r.data['local']) == [
+    assert list(map(str, r.data['local'])) == [
         '2030-01-31 00:00:00-05:00',
         '2030-03-31 00:00:00-04:00',
         '2030-05-31 00:00:00-04:00',
@@ -275,7 +351,7 @@ def test_dst_rollback_duplicates(post, admin_user):
     rrule = 'DTSTART;TZID=America/New_York:20301102T233000 RRULE:FREQ=HOURLY;INTERVAL=1;COUNT=5'
     r = post(url, {'rrule': rrule}, admin_user, expect=200)
 
-    assert map(str, r.data['local']) == [
+    assert list(map(str, r.data['local'])) == [
         '2030-11-02 23:30:00-04:00',
         '2030-11-03 00:30:00-04:00',
         '2030-11-03 01:30:00-04:00',

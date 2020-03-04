@@ -1,8 +1,8 @@
 # -*- coding: utf-8 -*-
 
 import pytest
-import mock
-import six
+from unittest import mock
+import json
 
 from django.core.exceptions import ValidationError
 
@@ -12,7 +12,12 @@ from awx.main.models import (
     Inventory,
     InventorySource,
     InventoryUpdate,
+    CredentialType,
+    Credential,
+    Job
 )
+from awx.main.constants import CLOUD_PROVIDERS
+from awx.main.models.inventory import PluginFileInjector
 from awx.main.utils.filters import SmartFilter
 
 
@@ -36,6 +41,83 @@ class TestInventoryScript:
             'remote_tower_enabled': 'true',
             'remote_tower_id': host.id
         }
+
+    def test_all_group(self, inventory):
+        inventory.groups.create(name='all', variables={'a1': 'a1'})
+        # make sure we return a1 details in output
+        data = inventory.get_script_data()
+        assert 'all' in data
+        assert data['all'] == {
+            'vars': {
+                'a1': 'a1'
+            }
+        }
+
+    def test_empty_group(self, inventory):
+        inventory.groups.create(name='ghost')
+        data = inventory.get_script_data()
+        # canonical behavior same as ansible-inventory
+        # group not provided top-level to avoid host / group confusion
+        # still list group as a child of the all group
+        assert 'ghost' not in data
+        assert 'ghost' in data['all']['children']
+
+    def test_empty_group_with_vars(self, inventory):
+        inventory.groups.create(name='ghost2', variables={'foo': 'bar'})
+        data = inventory.get_script_data()
+        # must be top-level key so group vars can be provided
+        assert 'ghost2' in data
+        assert data['ghost2']['vars'] == {'foo': 'bar'}
+        assert 'ghost2' in data['all']['children']
+
+    def test_grandparent_group(self, inventory):
+        g1 = inventory.groups.create(name='g1', variables={'v1': 'v1'})
+        g2 = inventory.groups.create(name='g2', variables={'v2': 'v2'})
+        h1 = inventory.hosts.create(name='h1')
+        # h1 becomes indirect member of g1 group
+        g1.children.add(g2)
+        g2.hosts.add(h1)
+        # make sure we return g1 details in output
+        data = inventory.get_script_data(hostvars=1)
+        assert 'g1' in data
+        assert 'g2' in data
+        assert data['g1'] == {
+            'children': ['g2'],
+            'vars': {'v1': 'v1'}
+        }
+        assert data['g2'] == {
+            'hosts': ['h1'],
+            'vars': {'v2': 'v2'}
+        }
+
+    def test_slice_subset(self, inventory):
+        for i in range(3):
+            inventory.hosts.create(name='host{}'.format(i))
+        for i in range(3):
+            assert inventory.get_script_data(slice_number=i + 1, slice_count=3) == {
+                'all': {'hosts': ['host{}'.format(i)]}
+            }
+
+    def test_slice_subset_with_groups(self, inventory):
+        hosts = []
+        for i in range(3):
+            host = inventory.hosts.create(name='host{}'.format(i))
+            hosts.append(host)
+        g1 = inventory.groups.create(name='contains_all_hosts')
+        for host in hosts:
+            g1.hosts.add(host)
+        g2 = inventory.groups.create(name='contains_two_hosts')
+        for host in hosts[:2]:
+            g2.hosts.add(host)
+        for i in range(3):
+            expected_data = {
+                'contains_all_hosts': {'hosts': ['host{}'.format(i)]},
+            }
+            if i < 2:
+                expected_data['contains_two_hosts'] = {'hosts': ['host{}'.format(i)]}
+            data = inventory.get_script_data(slice_number=i + 1, slice_count=3)
+            data.pop('all')
+            assert data == expected_data
 
 
 @pytest.mark.django_db
@@ -100,6 +182,29 @@ class TestSCMUpdateFeatures:
 
 
 @pytest.mark.django_db
+class TestRelatedJobs:
+
+    def test_inventory_related(self, inventory):
+        job = Job.objects.create(
+            inventory=inventory
+        )
+        assert job.id in [jerb.id for jerb in inventory._get_related_jobs()]
+
+    def test_related_group_jobs(self, group):
+        job = Job.objects.create(
+            inventory=group.inventory
+        )
+        assert job.id in [jerb.id for jerb in group._get_related_jobs()]
+
+    def test_related_group_update(self, group):
+        src = group.inventory_sources.create(name='foo')
+        job = InventoryUpdate.objects.create(
+            inventory_source=src
+        )
+        assert job.id in [jerb.id for jerb in group._get_related_jobs()]
+
+
+@pytest.mark.django_db
 class TestSCMClean:
     def test_clean_update_on_project_update_multiple(self, inventory):
         inv_src1 = InventorySource(inventory=inventory,
@@ -117,6 +222,108 @@ class TestSCMClean:
 
         with pytest.raises(ValidationError):
             inv_src2.clean_update_on_project_update()
+
+
+@pytest.mark.django_db
+class TestInventorySourceInjectors:
+    def test_should_use_plugin(self):
+        class foo(PluginFileInjector):
+            plugin_name = 'foo_compute'
+            initial_version = '2.7.8'
+        assert not foo('2.7.7').should_use_plugin()
+        assert foo('2.8').should_use_plugin()
+
+    def test_extra_credentials(self, project, credential):
+        inventory_source = InventorySource.objects.create(
+            name='foo', source='custom', source_project=project
+        )
+        inventory_source.credentials.add(credential)
+        assert inventory_source.get_cloud_credential() == credential  # for serializer
+        assert inventory_source.get_extra_credentials() == [credential]
+
+        inventory_source.source = 'ec2'
+        assert inventory_source.get_cloud_credential() == credential
+        assert inventory_source.get_extra_credentials() == []
+
+    def test_all_cloud_sources_covered(self):
+        """Code in several places relies on the fact that the older
+        CLOUD_PROVIDERS constant contains the same names as what are
+        defined within the injectors
+        """
+        assert set(CLOUD_PROVIDERS) == set(InventorySource.injectors.keys())
+
+    @pytest.mark.parametrize('source,filename', [
+        ('ec2', 'aws_ec2.yml'),
+        ('openstack', 'openstack.yml'),
+        ('gce', 'gcp_compute.yml')
+    ])
+    def test_plugin_filenames(self, source, filename):
+        """It is important that the filenames for inventory plugin files
+        are named correctly, because Ansible will reject files that do
+        not have these exact names
+        """
+        injector = InventorySource.injectors[source]('2.7.7')
+        assert injector.filename == filename
+
+    @pytest.mark.parametrize('source,script_name', [
+        ('ec2', 'ec2.py'),
+        ('rhv', 'ovirt4.py'),
+        ('satellite6', 'foreman.py'),
+        ('openstack', 'openstack_inventory.py')
+    ], ids=['ec2', 'rhv', 'satellite6', 'openstack'])
+    def test_script_filenames(self, source, script_name):
+        """Ansible has several exceptions in naming of scripts
+        """
+        injector = InventorySource.injectors[source]('2.7.7')
+        assert injector.script_name == script_name
+
+    def test_group_by_azure(self):
+        injector = InventorySource.injectors['azure_rm']('2.9')
+        inv_src = InventorySource(
+            name='azure source', source='azure_rm',
+            source_vars={'group_by_os_family': True}
+        )
+        group_by_on = injector.inventory_as_dict(inv_src, '/tmp/foo')
+        # suspicious, yes, that is just what the script did
+        expected_groups = 6
+        assert len(group_by_on['keyed_groups']) == expected_groups
+        inv_src.source_vars = json.dumps({'group_by_os_family': False})
+        group_by_off = injector.inventory_as_dict(inv_src, '/tmp/foo')
+        # much better, everyone should turn off the flag and live in the future
+        assert len(group_by_off['keyed_groups']) == expected_groups - 1
+
+    def test_tower_plugin_named_url(self):
+        injector = InventorySource.injectors['tower']('2.9')
+        inv_src = InventorySource(
+            name='my tower source', source='tower',
+            # named URL pattern "inventory++organization"
+            instance_filters='Designer hair 읰++Cosmetic_products䵆'
+        )
+        result = injector.inventory_as_dict(inv_src, '/tmp/foo')
+        assert result['inventory_id'] == 'Designer%20hair%20%EC%9D%B0++Cosmetic_products%E4%B5%86'
+
+
+@pytest.mark.django_db
+def test_custom_source_custom_credential(organization):
+    credential_type = CredentialType.objects.create(
+        kind='cloud',
+        name='MyCloud',
+        inputs = {
+            'fields': [{
+                'id': 'api_token',
+                'label': 'API Token',
+                'type': 'string',
+                'secret': True
+            }]
+        }
+    )
+    credential = Credential.objects.create(
+        name='my cred', credential_type=credential_type, organization=organization,
+        inputs={'api_token': 'secret'}
+    )
+    inv_source = InventorySource.objects.create(source='scm')
+    inv_source.credentials.add(credential)
+    assert inv_source.get_cloud_credential() == credential
 
 
 @pytest.fixture
@@ -161,7 +368,7 @@ def test_inventory_update_name(inventory, inventory_source):
 
 @pytest.mark.django_db
 def test_inventory_name_with_unicode(inventory, inventory_source):
-    inventory.name = six.u('オオオ')
+    inventory.name = 'オオオ'
     inventory.save()
     iu = inventory_source.update()
     assert iu.name.startswith(inventory.name)

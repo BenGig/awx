@@ -7,7 +7,6 @@ from django.core.serializers.json import DjangoJSONEncoder
 from django.utils.functional import Promise
 from django.utils.encoding import force_text
 
-from coreapi.compat import force_bytes
 from openapi_codec.encode import generate_swagger_object
 import pytest
 
@@ -17,6 +16,8 @@ from awx.api.versioning import drf_reverse
 class i18nEncoder(DjangoJSONEncoder):
     def default(self, obj):
         if isinstance(obj, Promise):
+            return force_text(obj)
+        if type(obj) == bytes:
             return force_text(obj)
         return super(i18nEncoder, self).default(obj)
 
@@ -49,7 +50,8 @@ class TestSwaggerGeneration():
             data.update(response.accepted_renderer.get_customizations() or {})
 
             data['host'] = None
-            data['modified'] = datetime.datetime.utcnow().isoformat()
+            if not pytest.config.getoption("--genschema"):
+                data['modified'] = datetime.datetime.utcnow().isoformat()
             data['schemes'] = ['https']
             data['consumes'] = ['application/json']
 
@@ -89,17 +91,17 @@ class TestSwaggerGeneration():
         # The number of API endpoints changes over time, but let's just check
         # for a reasonable number here; if this test starts failing, raise/lower the bounds
         paths = JSON['paths']
-        assert 250 < len(paths) < 300
-        assert paths['/api/'].keys() == ['get']
-        assert paths['/api/v2/'].keys() == ['get']
-        assert sorted(
+        assert 250 < len(paths) < 350
+        assert list(paths['/api/'].keys()) == ['get']
+        assert list(paths['/api/v2/'].keys()) == ['get']
+        assert list(sorted(
             paths['/api/v2/credentials/'].keys()
-        ) == ['get', 'post']
-        assert sorted(
+        )) == ['get', 'post']
+        assert list(sorted(
             paths['/api/v2/credentials/{id}/'].keys()
-        ) == ['delete', 'get', 'patch', 'put']
-        assert paths['/api/v2/settings/'].keys() == ['get']
-        assert paths['/api/v2/settings/{category_slug}/'].keys() == [
+        )) == ['delete', 'get', 'patch', 'put']
+        assert list(paths['/api/v2/settings/'].keys()) == ['get']
+        assert list(paths['/api/v2/settings/{category_slug}/'].keys()) == [
             'get', 'put', 'patch', 'delete'
         ]
 
@@ -119,9 +121,9 @@ class TestSwaggerGeneration():
     def test_autogen_response_examples(self, swagger_autogen):
         for pattern, node in TestSwaggerGeneration.JSON['paths'].items():
             pattern = pattern.replace('{id}', '[0-9]+')
-            pattern = pattern.replace('{category_slug}', '[a-zA-Z0-9\-]+')
+            pattern = pattern.replace(r'{category_slug}', r'[a-zA-Z0-9\-]+')
             for path, result in swagger_autogen.items():
-                if re.match('^{}$'.format(pattern), path):
+                if re.match(r'^{}$'.format(pattern), path):
                     for key, value in result.items():
                         method, status_code = key
                         content_type, resp, request_data = value
@@ -139,11 +141,14 @@ class TestSwaggerGeneration():
                                 for param in node[method].get('parameters'):
                                     if param['in'] == 'body':
                                         node[method]['parameters'].remove(param)
-                                node[method].setdefault('parameters', []).append({
-                                    'name': 'data',
-                                    'in': 'body',
-                                    'schema': {'example': request_data},
-                                })
+                                if pytest.config.getoption("--genschema"):
+                                    pytest.skip("In schema generator skipping swagger generator", allow_module_level=True)
+                                else:
+                                    node[method].setdefault('parameters', []).append({
+                                        'name': 'data',
+                                        'in': 'body',
+                                        'schema': {'example': request_data},
+                                    })
 
                             # Build response examples
                             if resp:
@@ -158,14 +163,22 @@ class TestSwaggerGeneration():
     @classmethod
     def teardown_class(cls):
         with open('swagger.json', 'w') as f:
-            data = force_bytes(
-                json.dumps(cls.JSON, cls=i18nEncoder, indent=2)
-            )
+            data = json.dumps(cls.JSON, cls=i18nEncoder, indent=2, sort_keys=True)
             # replace ISO dates w/ the same value so we don't generate
             # needless diffs
             data = re.sub(
-                '[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}.[0-9]+Z',
-                '2018-02-01T08:00:00.000000Z',
+                r'[0-9]{4}-[0-9]{2}-[0-9]{2}(T|\s)[0-9]{2}:[0-9]{2}:[0-9]{2}.[0-9]+(Z|\+[0-9]{2}:[0-9]{2})?',
+                r'2018-02-01T08:00:00.000000Z',
+                data
+            )
+            data = re.sub(
+                r'''(\s+"client_id": ")([a-zA-Z0-9]{40})("\,\s*)''',
+                r'\1xxxx\3',
+                data
+            )
+            data = re.sub(
+                r'"action_node": "awx-[^"]+"',
+                '"action_node": "awx"',
                 data
             )
             f.write(data)

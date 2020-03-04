@@ -1,5 +1,5 @@
 # Python
-import six
+import urllib.parse
 from collections import deque
 # Django
 from django.db import models
@@ -12,7 +12,7 @@ NAMED_URL_RES_INNER_DILIMITER = "+"
 NAMED_URL_RES_DILIMITER_ENCODE = "%2B"
 URL_PATH_RESERVED_CHARSET = {}
 for c in ';/?:@=&[]':
-    URL_PATH_RESERVED_CHARSET[c] = six.moves.urllib.parse.quote(c, safe='')
+    URL_PATH_RESERVED_CHARSET[c] = urllib.parse.quote(c, safe='')
 FK_NAME = 0
 NEXT_NODE = 1
 
@@ -125,8 +125,8 @@ class GraphNode(object):
             evolving_prefix = '__'.join(prefixes)
             for attr_name, attr_value in zip(stack[-1].fields, named_url_parts):
                 attr_name = ("__%s" % attr_name) if evolving_prefix else attr_name
-                if isinstance(attr_value, six.binary_type):
-                    attr_value = six.moves.urllib.parse.unquote(attr_value).decode(encoding='utf-8')
+                if isinstance(attr_value, str):
+                    attr_value = urllib.parse.unquote(attr_value)
                 kwargs[evolving_prefix + attr_name] = attr_value
             idx += 1
         if stack[-1].counter >= len(stack[-1].adj_list):
@@ -208,7 +208,7 @@ def _check_unique_together_fields(model, ut):
         field = model._meta.get_field(field_name)
         if field_name == 'name':
             has_name = True
-        elif type(field) == models.ForeignKey and field.rel.to != model:
+        elif type(field) == models.ForeignKey and field.related_model != model:
             fk_names.append(field_name)
         elif issubclass(type(field), models.CharField) and field.choices:
             fields.append(field_name)
@@ -256,7 +256,7 @@ def _dfs(configuration, model, graph, dead_ends, new_deadends, parents):
     fields, fk_names = configuration[model][0][:], configuration[model][1][:]
     adj_list = []
     for fk_name in fk_names:
-        next_model = model._meta.get_field(fk_name).rel.to
+        next_model = model._meta.get_field(fk_name).related_model
         if issubclass(next_model, ContentType):
             continue
         if next_model not in configuration or\
@@ -304,7 +304,7 @@ def generate_graph(models):
                 candidate_nodes[model].append([fields, fk_names])
         if model not in candidate_nodes:
             dead_ends.add(model)
-    candidate_nodes = candidate_nodes.items()
+    candidate_nodes = list(candidate_nodes.items())
     largest_graph = {}
     for configuration in _generate_configurations(candidate_nodes):
         candidate_graph = _generate_single_graph(configuration, dead_ends)

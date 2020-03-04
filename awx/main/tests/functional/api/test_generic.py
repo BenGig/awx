@@ -70,7 +70,7 @@ class TestDeleteViews:
         delete(
             reverse(
                 'api:inventory_source_hosts_list',
-                kwargs={'version': 'v2', 'pk': inventory_source.pk}
+                kwargs={'pk': inventory_source.pk}
             ), user=rando, expect=403
         )
 
@@ -80,7 +80,7 @@ class TestDeleteViews:
         delete(
             reverse(
                 'api:inventory_source_hosts_list',
-                kwargs={'version': 'v2', 'pk': inventory_source.pk}
+                kwargs={'pk': inventory_source.pk}
             ), user=rando, expect=204
         )
         assert inventory_source.hosts.count() == 0
@@ -91,3 +91,36 @@ class TestDeleteViews:
             job.get_absolute_url(), user=system_auditor
         )
         assert resp.status_code == 403
+
+
+@pytest.mark.django_db
+def test_filterable_fields(options, instance, admin_user):
+    r = options(
+        url=instance.get_absolute_url(),
+        user=admin_user
+    )
+
+    filterable_info = r.data['actions']['GET']['created']
+    non_filterable_info = r.data['actions']['GET']['percent_capacity_remaining']
+
+    assert 'filterable' in filterable_info
+    assert filterable_info['filterable'] is True
+
+    assert not non_filterable_info['filterable']
+
+
+@pytest.mark.django_db
+def test_handle_content_type(post, admin):
+    ''' Tower should return 415 when wrong content type is in HTTP requests '''
+    post(reverse('api:project_list'),
+         {'name': 't', 'organization': None},
+         admin,
+         content_type='text/html',
+         expect=415)
+
+
+@pytest.mark.django_db
+def test_basic_not_found(get, admin_user):
+    root_url = reverse('api:api_v2_root_view')
+    r = get(root_url + 'fooooooo', user=admin_user, expect=404)
+    assert r.data.get('detail') == 'The requested resource could not be found.'

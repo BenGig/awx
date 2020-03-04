@@ -27,12 +27,17 @@
 .at-InputCheckbox {
     margin: 0;
     padding: 0;
+    display: block;
+    min-height: 20px;
 
     & > label {
+        font-weight: normal;
+
         & > input[type=checkbox] {
             height: @at-height-input;
             margin: 0;
             padding: 0;
+            float: left;
         }
 
         & > p {
@@ -68,6 +73,16 @@
     display: inherit;
     min-width: @at-width-input-button-md;
     height: @at-height-textarea;
+}
+
+.at-Input-button--long-sm {
+    .at-mixin-InputButton();
+    max-width: @at-width-input-button-md;
+    min-height: @at-height-textarea;
+}
+
+.at-Input-button--active {
+    .at-mixin-ButtonColor(at-color-info, at-color-default);
 }
 
 .at-Input--focus {
@@ -148,8 +163,6 @@
 
     & > input[type=checkbox] {
         margin: 0 3px 0 0;
-        position: relative;
-        top: 3px
     }
 
     & > p {
@@ -219,6 +232,32 @@
     padding: 6px @at-padding-input 0 @at-padding-input;
 }
 
+.at-InputLookup {
+    display: flex;
+
+    .at-InputLookup-button {
+        .at-mixin-InputButton();
+        border-radius: @at-border-radius 0 0 @at-border-radius;
+        border-right: none;
+        flex: 0 0 35px;
+        height: auto;
+        min-height: 30px
+    }
+
+    .at-InputLookup-tagContainer {
+        .at-mixin-Border;
+        display: flex;
+        flex-flow: row wrap;
+        padding: 0 10px;
+        width: 100%;
+    }
+
+    .at-InputLookup-button + .at-Input,
+    .at-InputLookup-tagContainer {
+        border-radius: 0 @at-border-radius @at-border-radius 0;
+    }
+}
+
 .at-InputSlider {
     display: flex;
     padding: 5px 0;
@@ -250,9 +289,10 @@
             height: 1px;
             width: 100%;
         }
+
         &::-webkit-slider-thumb {
             -webkit-appearance: none;
-            background: @at-color-input-slider-thumb;
+            background-color: @at-color-input-slider-thumb;
             border-radius: 50%;
             border: none;
             cursor: pointer;
@@ -260,5 +300,60 @@
             margin-top: -7px;
             width: 16px;
         }
+
+    }
+
+    input[type=range]::-moz-range-thumb {
+        -webkit-appearance: none;
+        background-color: @at-color-input-slider-thumb;
+        border-radius: 50%;
+        border: none;
+        cursor: pointer;
+        height: 16px;
+        width: 16px;
+    }
+
+    input[type=range]::-moz-range-track {
+        background: @at-color-input-slider-track;
+        cursor: pointer;
+        height: 1px;
+        width: 100%;
+    }
+
+    input[type=range][disabled] {
+        &::-webkit-slider-thumb {
+            background: @at-color-disabled;
+            border: solid 1px @at-color-disabled;
+            cursor: not-allowed;
+        }
+    }
+}
+
+.at-InputGroup-container {
+    .row {
+        margin: 0;
+    }
+}
+
+.at-InputTaggedTextarea {
+    .at-mixin-FontFixedWidth();
+    min-height: @at-height-textarea;
+    padding: 6px @at-padding-input 0 @at-padding-input;
+    border-radius: @at-border-radius;
+}
+
+.at-InputTagContainer {
+    display: flex;
+    width: 100%;
+    flex-wrap: wrap;
+
+    .TagComponent {
+        max-height: @at-space-4x;
+    }
+
+    .TagComponent-name {
+        align-self: auto;
+        word-break: break-all;
+        font-family: 'Open Sans', sans-serif;
     }
 }

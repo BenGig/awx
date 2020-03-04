@@ -1,8 +1,8 @@
 import pytest
-import mock
+from unittest import mock
 from datetime import timedelta
 from awx.main.scheduler import TaskManager
-from awx.main.models import InstanceGroup
+from awx.main.models import InstanceGroup, WorkflowJob
 from awx.main.tasks import apply_cluster_membership_policies
 
 
@@ -31,7 +31,7 @@ def test_multi_group_basic_job_launch(instance_factory, default_instance_group, 
         mock_task_impact.return_value = 500
         with mocker.patch("awx.main.scheduler.TaskManager.start_task"):
             TaskManager().schedule()
-            TaskManager.start_task.assert_has_calls([mock.call(j1, ig1, []), mock.call(j2, ig2, [])])
+            TaskManager.start_task.assert_has_calls([mock.call(j1, ig1, [], i1), mock.call(j2, ig2, [], i2)])
 
 
 
@@ -65,16 +65,31 @@ def test_multi_group_with_shared_dependency(instance_factory, default_instance_g
     with mocker.patch("awx.main.scheduler.TaskManager.start_task"):
         TaskManager().schedule()
         pu = p.project_updates.first()
-        TaskManager.start_task.assert_called_once_with(pu, default_instance_group, [j1])
+        TaskManager.start_task.assert_called_once_with(pu,
+                                                       default_instance_group,
+                                                       [j1,j2],
+                                                       default_instance_group.instances.all()[0])
         pu.finished = pu.created + timedelta(seconds=1)
         pu.status = "successful"
         pu.save()
     with mock.patch("awx.main.scheduler.TaskManager.start_task"):
         TaskManager().schedule()
 
-        TaskManager.start_task.assert_any_call(j1, ig1, [])
-        TaskManager.start_task.assert_any_call(j2, ig2, [])
+        TaskManager.start_task.assert_any_call(j1, ig1, [], i1)
+        TaskManager.start_task.assert_any_call(j2, ig2, [], i2)
         assert TaskManager.start_task.call_count == 2
+
+
+@pytest.mark.django_db
+def test_workflow_job_no_instancegroup(workflow_job_template_factory, default_instance_group, mocker):
+    wfjt = workflow_job_template_factory('anicedayforawalk').workflow_job_template
+    wfj = WorkflowJob.objects.create(workflow_job_template=wfjt)
+    wfj.status = "pending"
+    wfj.save()
+    with mocker.patch("awx.main.scheduler.TaskManager.start_task"):
+        TaskManager().schedule()
+        TaskManager.start_task.assert_called_once_with(wfj, None, [], None)
+        assert wfj.instance_group is None
 
 
 @pytest.mark.django_db
@@ -119,8 +134,9 @@ def test_overcapacity_blocking_other_groups_unaffected(instance_factory, default
         mock_task_impact.return_value = 500
         with mock.patch.object(TaskManager, "start_task", wraps=tm.start_task) as mock_job:
             tm.schedule()
-            mock_job.assert_has_calls([mock.call(j1, ig1, []), mock.call(j1_1, ig1, []),
-                                       mock.call(j2, ig2, [])])
+            mock_job.assert_has_calls([mock.call(j1, ig1, [], i1),
+                                       mock.call(j1_1, ig1, [], i1),
+                                       mock.call(j2, ig2, [], i2)])
             assert mock_job.call_count == 3
 
 
@@ -151,13 +167,16 @@ def test_failover_group_run(instance_factory, default_instance_group, mocker,
         mock_task_impact.return_value = 500
         with mock.patch.object(TaskManager, "start_task", wraps=tm.start_task) as mock_job:
             tm.schedule()
-            mock_job.assert_has_calls([mock.call(j1, ig1, []), mock.call(j1_1, ig2, [])])
+            mock_job.assert_has_calls([mock.call(j1, ig1, [], i1),
+                                       mock.call(j1_1, ig2, [], i2)])
             assert mock_job.call_count == 2
 
 
 @pytest.mark.django_db
 def test_instance_group_basic_policies(instance_factory, instance_group_factory):
     i0 = instance_factory("i0")
+    i0.managed_by_policy = False
+    i0.save()
     i1 = instance_factory("i1")
     i2 = instance_factory("i2")
     i3 = instance_factory("i3")
@@ -174,7 +193,7 @@ def test_instance_group_basic_policies(instance_factory, instance_group_factory)
     ig2 = InstanceGroup.objects.get(id=ig2.id)
     ig3 = InstanceGroup.objects.get(id=ig3.id)
     assert len(ig0.instances.all()) == 1
-    assert i0 in ig0.instances.all() 
+    assert i0 in ig0.instances.all()
     assert len(InstanceGroup.objects.get(id=ig1.id).instances.all()) == 2
     assert i1 in ig1.instances.all()
     assert i2 in ig1.instances.all()

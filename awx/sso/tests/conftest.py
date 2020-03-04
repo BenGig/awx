@@ -27,25 +27,8 @@ def existing_tacacsplus_user():
         user = User.objects.get(username="foo")
     except User.DoesNotExist:
         user = User(username="foo")
+        user.set_unusable_password()
         user.save()
         enterprise_auth = UserEnterpriseAuth(user=user, provider='tacacs+')
         enterprise_auth.save()
     return user
-
-
-@pytest.fixture
-def feature_enabled():
-    def func(feature):
-        def inner(name):
-            return name == feature
-        return inner
-    return func
-
-
-@pytest.fixture
-def feature_disabled():
-    def func(feature):
-        def inner(name):
-            return False
-        return inner
-    return func

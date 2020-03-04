@@ -1,5 +1,7 @@
 import pytest
 
+from unittest import mock
+
 from awx.main.access import CredentialAccess
 from awx.main.models.credential import Credential
 from django.contrib.auth.models import User
@@ -20,6 +22,21 @@ def test_credential_access_superuser():
     assert access.can_add(None)
     assert access.can_change(credential, None)
     assert access.can_delete(credential)
+
+
+@pytest.mark.django_db
+def test_credential_access_self(rando):
+    access = CredentialAccess(rando)
+    assert access.can_add({'user': rando.pk})
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize('ext_auth', [True, False])
+def test_credential_access_org_user(org_member, org_admin, ext_auth):
+    access = CredentialAccess(org_admin)
+    with mock.patch('awx.main.access.settings') as settings_mock:
+        settings_mock.MANAGE_ORGANIZATION_AUTH = ext_auth
+        assert access.can_add({'user': org_member.pk})
 
 
 @pytest.mark.django_db
@@ -55,6 +72,19 @@ def test_org_credential_access_admin(role_name, alice, org_credential):
     assert access.can_change(org_credential, {
         'description': 'New description.',
         'organization': org_credential.organization.pk})
+
+
+@pytest.mark.django_db
+def test_org_and_user_credential_access(alice, organization):
+    """Address specific bug where any user could make an org credential
+    in another org without any permissions to that org
+    """
+    # Owner is both user and org, but org permission should still be checked
+    assert not CredentialAccess(alice).can_add({
+        'name': 'New credential.',
+        'user': alice.pk,
+        'organization': organization.pk
+    })
 
 
 @pytest.mark.django_db

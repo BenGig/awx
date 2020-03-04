@@ -1,11 +1,12 @@
 # Copyright (c) 2015 Ansible, Inc.
 # All Rights Reserved.
 
+from django.utils.safestring import SafeText
+from prometheus_client.parser import text_string_to_metric_families
+
 # Django REST Framework
 from rest_framework import renderers
 from rest_framework.request import override_method
-
-import six
 
 
 class BrowsableAPIRenderer(renderers.BrowsableAPIRenderer):
@@ -19,6 +20,19 @@ class BrowsableAPIRenderer(renderers.BrowsableAPIRenderer):
         if view.request.method == 'OPTIONS' and not isinstance(renderer, renderers.JSONRenderer):
             return renderers.JSONRenderer()
         return renderer
+
+    def get_content(self, renderer, data, accepted_media_type, renderer_context):
+        if isinstance(data, SafeText):
+            # Older versions of Django (pre-2.0) have a py3 bug which causes
+            # bytestrings marked as "safe" to not actually get _treated_ as
+            # safe; this causes certain embedded strings (like the stdout HTML
+            # view) to be improperly escaped
+            # see: https://github.com/ansible/awx/issues/3108
+            # https://code.djangoproject.com/ticket/28121
+            return data
+        return super(BrowsableAPIRenderer, self).get_content(renderer, data,
+                                                             accepted_media_type,
+                                                             renderer_context)
 
     def get_context(self, data, accepted_media_type, renderer_context):
         # Store the associated response status to know how to populate the raw
@@ -71,8 +85,8 @@ class PlainTextRenderer(renderers.BaseRenderer):
     format = 'txt'
 
     def render(self, data, media_type=None, renderer_context=None):
-        if not isinstance(data, six.string_types):
-            data = six.text_type(data)
+        if not isinstance(data, str):
+            data = str(data)
         return data.encode(self.charset)
 
 
@@ -90,3 +104,21 @@ class AnsiTextRenderer(PlainTextRenderer):
 class AnsiDownloadRenderer(PlainTextRenderer):
 
     format = "ansi_download"
+
+
+class PrometheusJSONRenderer(renderers.JSONRenderer):
+
+    def render(self, data, accepted_media_type=None, renderer_context=None):
+        if isinstance(data, dict):
+            # HTTP errors are {'detail': ErrorDetail(string='...', code=...)}
+            return super(PrometheusJSONRenderer, self).render(
+                data, accepted_media_type, renderer_context
+            )
+        parsed_metrics = text_string_to_metric_families(data)
+        data = {}
+        for family in parsed_metrics:
+            for sample in family.samples:
+                data[sample[0]] = {"labels": sample[1], "value": sample[2]}
+        return super(PrometheusJSONRenderer, self).render(
+            data, accepted_media_type, renderer_context
+        )

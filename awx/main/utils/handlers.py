@@ -4,49 +4,46 @@
 # Python
 import logging
 import json
+import os
 import requests
 import time
-import urlparse
+import threading
 import socket
 import select
-import six
+from urllib import parse as urlparse
 from concurrent.futures import ThreadPoolExecutor
 from requests.exceptions import RequestException
 
-# loggly
-import traceback
-
+# Django
 from django.conf import settings
+
+# requests futures, a dependency used by these handlers
 from requests_futures.sessions import FuturesSession
+import cachetools
 
 # AWX
 from awx.main.utils.formatters import LogstashFormatter
 
 
-__all__ = ['HTTPSNullHandler', 'BaseHTTPSHandler', 'TCPHandler', 'UDPHandler',
-           'configure_external_logger']
+__all__ = ['BaseHTTPSHandler', 'TCPHandler', 'UDPHandler',
+           'AWXProxyHandler']
 
 
 logger = logging.getLogger('awx.main.utils.handlers')
 
-# AWX external logging handler, generally designed to be used
-# with the accompanying LogstashHandler, derives from python-logstash library
-# Non-blocking request accomplished by FuturesSession, similar
-# to the loggly-python-handler library (not used)
 
 # Translation of parameter names to names in Django settings
+# logging settings category, only those related to handler / log emission
 PARAM_NAMES = {
     'host': 'LOG_AGGREGATOR_HOST',
     'port': 'LOG_AGGREGATOR_PORT',
     'message_type': 'LOG_AGGREGATOR_TYPE',
     'username': 'LOG_AGGREGATOR_USERNAME',
     'password': 'LOG_AGGREGATOR_PASSWORD',
-    'enabled_loggers': 'LOG_AGGREGATOR_LOGGERS',
     'indv_facts': 'LOG_AGGREGATOR_INDIVIDUAL_FACTS',
-    'enabled_flag': 'LOG_AGGREGATOR_ENABLED',
     'tcp_timeout': 'LOG_AGGREGATOR_TCP_TIMEOUT',
     'verify_cert': 'LOG_AGGREGATOR_VERIFY_CERT',
-    'lvl': 'LOG_AGGREGATOR_LEVEL',
+    'protocol': 'LOG_AGGREGATOR_PROTOCOL'
 }
 
 
@@ -56,13 +53,6 @@ def unused_callback(sess, resp):
 
 class LoggingConnectivityException(Exception):
     pass
-
-
-class HTTPSNullHandler(logging.NullHandler):
-    "Placeholder null handler to allow loading without database access"
-
-    def __init__(self, *args, **kwargs):
-        return super(HTTPSNullHandler, self).__init__()
 
 
 class VerboseThreadPoolExecutor(ThreadPoolExecutor):
@@ -91,32 +81,25 @@ class VerboseThreadPoolExecutor(ThreadPoolExecutor):
                                                              **kwargs)
 
 
-LEVEL_MAPPING = {
-    'DEBUG': logging.DEBUG,
-    'INFO': logging.INFO,
-    'WARNING': logging.WARNING,
-    'ERROR': logging.ERROR,
-    'CRITICAL': logging.CRITICAL,
-}
+class SocketResult:
+    '''
+    A class to be the return type of methods that send data over a socket
+    allows object to be used in the same way as a request futures object
+    '''
+    def __init__(self, ok, reason=None):
+        self.ok = ok
+        self.reason = reason
+
+    def result(self):
+        return self
 
 
 class BaseHandler(logging.Handler):
-    def __init__(self, **kwargs):
+    def __init__(self, host=None, port=None, indv_facts=None, **kwargs):
         super(BaseHandler, self).__init__()
-        for fd in PARAM_NAMES:
-            setattr(self, fd, kwargs.get(fd, None))
-
-    @classmethod
-    def from_django_settings(cls, settings, *args, **kwargs):
-        for param, django_setting_name in PARAM_NAMES.items():
-            kwargs[param] = getattr(settings, django_setting_name, None)
-        return cls(*args, **kwargs)
-
-    def get_full_message(self, record):
-        if record.exc_info:
-            return '\n'.join(traceback.format_exception(*record.exc_info))
-        else:
-            return record.getMessage()
+        self.host = host
+        self.port = port
+        self.indv_facts = indv_facts
 
     def _send(self, payload):
         """Actually send message to log aggregator.
@@ -128,26 +111,11 @@ class BaseHandler(logging.Handler):
             return [self._send(json.loads(self.format(record)))]
         return [self._send(self.format(record))]
 
-    def _skip_log(self, logger_name):
-        if self.host == '' or (not self.enabled_flag):
-            return True
-        # Don't send handler-related records.
-        if logger_name == logger.name:
-            return True
-        # AWX log emission is only turned off by enablement setting
-        if not logger_name.startswith('awx.analytics'):
-            return False
-        return self.enabled_loggers is None or logger_name[len('awx.analytics.'):] not in self.enabled_loggers
-
     def emit(self, record):
         """
             Emit a log record.  Returns a list of zero or more
             implementation-specific objects for tests.
         """
-        if not record.name.startswith('awx.analytics') and record.levelno < LEVEL_MAPPING[self.lvl]:
-            return []
-        if self._skip_log(record.name):
-            return []
         try:
             return self._format_and_send_record(record)
         except (KeyboardInterrupt, SystemExit):
@@ -181,6 +149,11 @@ class BaseHandler(logging.Handler):
 
 
 class BaseHTTPSHandler(BaseHandler):
+    '''
+    Originally derived from python-logstash library
+    Non-blocking request accomplished by FuturesSession, similar
+    to the loggly-python-handler library
+    '''
     def _add_auth_information(self):
         if self.message_type == 'logstash':
             if not self.username:
@@ -196,38 +169,19 @@ class BaseHTTPSHandler(BaseHandler):
             }
             self.session.headers.update(headers)
 
-    def __init__(self, fqdn=False, **kwargs):
+    def __init__(self, fqdn=False, message_type=None, username=None, password=None,
+                 tcp_timeout=5, verify_cert=True, **kwargs):
         self.fqdn = fqdn
+        self.message_type = message_type
+        self.username = username
+        self.password = password
+        self.tcp_timeout = tcp_timeout
+        self.verify_cert = verify_cert
         super(BaseHTTPSHandler, self).__init__(**kwargs)
         self.session = FuturesSession(executor=VerboseThreadPoolExecutor(
             max_workers=2  # this is the default used by requests_futures
         ))
         self._add_auth_information()
-
-    @classmethod
-    def perform_test(cls, settings):
-        """
-        Tests logging connectivity for the current logging settings.
-        @raises LoggingConnectivityException
-        """
-        handler = cls.from_django_settings(settings)
-        handler.enabled_flag = True
-        handler.setFormatter(LogstashFormatter(settings_module=settings))
-        logger = logging.getLogger(__file__)
-        fn, lno, func = logger.findCaller()
-        record = logger.makeRecord('awx', 10, fn, lno,
-                                   'AWX Connection Test', tuple(),
-                                   None, func)
-        futures = handler.emit(record)
-        for future in futures:
-            try:
-                resp = future.result()
-                if not resp.ok:
-                    raise LoggingConnectivityException(
-                        ': '.join([str(resp.status_code), resp.reason or ''])
-                    )
-            except RequestException as e:
-                raise LoggingConnectivityException(str(e))
 
     def _get_post_kwargs(self, payload_input):
         if self.message_type == 'splunk':
@@ -251,7 +205,7 @@ class BaseHTTPSHandler(BaseHandler):
             https://docs.python.org/3/library/concurrent.futures.html#future-objects
             http://pythonhosted.org/futures/
         """
-        return self.session.post(self._get_host(scheme='http'),
+        return self.session.post(self._get_host(scheme='https'),
                                  **self._get_post_kwargs(payload))
 
 
@@ -259,12 +213,16 @@ def _encode_payload_for_socket(payload):
     encoded_payload = payload
     if isinstance(encoded_payload, dict):
         encoded_payload = json.dumps(encoded_payload, ensure_ascii=False)
-    if isinstance(encoded_payload, six.text_type):
+    if isinstance(encoded_payload, str):
         encoded_payload = encoded_payload.encode('utf-8')
     return encoded_payload
 
 
 class TCPHandler(BaseHandler):
+    def __init__(self, tcp_timeout=5, **kwargs):
+        self.tcp_timeout = tcp_timeout
+        super(TCPHandler, self).__init__(**kwargs)
+
     def _send(self, payload):
         payload = _encode_payload_for_socket(payload)
         sok = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -273,39 +231,41 @@ class TCPHandler(BaseHandler):
             sok.setblocking(0)
             _, ready_to_send, _ = select.select([], [sok], [], float(self.tcp_timeout))
             if len(ready_to_send) == 0:
-                logger.warning("Socket currently busy, failed to send message")
-                sok.close()
-                return
-            sok.send(payload)
+                ret = SocketResult(False, "Socket currently busy, failed to send message")
+                logger.warning(ret.reason)
+            else:
+                sok.send(payload)
+                ret = SocketResult(True)  # success!
         except Exception as e:
-            logger.exception("Error sending message from %s: %s" %
-                             (TCPHandler.__name__, e.message))
-        sok.close()
+            ret = SocketResult(False, "Error sending message from %s: %s" %
+                               (TCPHandler.__name__,
+                                ' '.join(str(arg) for arg in e.args)))
+            logger.exception(ret.reason)
+        finally:
+            sok.close()
+        return ret
 
 
 class UDPHandler(BaseHandler):
+    message = "Cannot determine if UDP messages are received."
+
     def __init__(self, **kwargs):
         super(UDPHandler, self).__init__(**kwargs)
         self.socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
 
     def _send(self, payload):
         payload = _encode_payload_for_socket(payload)
-        return self.socket.sendto(payload, (self._get_host(hostname_only=True), self.port or 0))
+        self.socket.sendto(payload, (self._get_host(hostname_only=True), self.port or 0))
+        return SocketResult(True, reason=self.message)
 
-    @classmethod
-    def perform_test(cls, settings):
-        """
-        Tests logging connectivity for the current logging settings.
-        """
-        handler = cls.from_django_settings(settings)
-        handler.enabled_flag = True
-        handler.setFormatter(LogstashFormatter(settings_module=settings))
-        logger = logging.getLogger(__file__)
-        fn, lno, func = logger.findCaller()
-        record = logger.makeRecord('awx', 10, fn, lno,
-                                   'AWX Connection Test', tuple(),
-                                   None, func)
-        handler.emit(_encode_payload_for_socket(record))
+
+class AWXNullHandler(logging.NullHandler):
+    '''
+    Only additional this does is accept arbitrary __init__ params because
+    the proxy handler does not (yet) work with arbitrary handler classes
+    '''
+    def __init__(self, *args, **kwargs):
+        super(AWXNullHandler, self).__init__()
 
 
 HANDLER_MAPPING = {
@@ -313,6 +273,134 @@ HANDLER_MAPPING = {
     'tcp': TCPHandler,
     'udp': UDPHandler,
 }
+
+
+TTLCache = cachetools.TTLCache
+
+if 'py.test' in os.environ.get('_', ''):
+    # don't cache settings in unit tests
+    class TTLCache(TTLCache):
+
+        def __getitem__(self, item):
+            raise KeyError()
+
+
+class AWXProxyHandler(logging.Handler):
+    '''
+    Handler specific to the AWX external logging feature
+
+    Will dynamically create a handler specific to the configured
+    protocol, and will create a new one automatically on setting change
+
+    Managing parameters:
+    All parameters will get their value from settings as a default
+    if the parameter was either provided on init, or set manually,
+    this value will take precedence.
+    Parameters match same parameters in the actualized handler classes.
+    '''
+
+    thread_local = threading.local()
+    _auditor = None
+
+    def __init__(self, **kwargs):
+        # TODO: process 'level' kwarg
+        super(AWXProxyHandler, self).__init__(**kwargs)
+        self._handler = None
+        self._old_kwargs = {}
+
+    @property
+    def auditor(self):
+        if not self._auditor:
+            self._auditor = logging.handlers.RotatingFileHandler(
+                filename='/var/log/tower/external.log',
+                maxBytes=1024 * 1024 * 50, # 50 MB
+                backupCount=5,
+            )
+
+            class WritableLogstashFormatter(LogstashFormatter):
+                @classmethod
+                def serialize(cls, message):
+                    return json.dumps(message)
+
+            self._auditor.setFormatter(WritableLogstashFormatter())
+        return self._auditor
+
+    def get_handler_class(self, protocol):
+        return HANDLER_MAPPING.get(protocol, AWXNullHandler)
+
+    @cachetools.cached(cache=TTLCache(maxsize=1, ttl=3), key=lambda *args, **kw: 'get_handler')
+    def get_handler(self, custom_settings=None, force_create=False):
+        new_kwargs = {}
+        use_settings = custom_settings or settings
+        for field_name, setting_name in PARAM_NAMES.items():
+            val = getattr(use_settings, setting_name, None)
+            if val is None:
+                continue
+            new_kwargs[field_name] = val
+        if new_kwargs == self._old_kwargs and self._handler and (not force_create):
+            # avoids re-creating session objects, and other such things
+            return self._handler
+        self._old_kwargs = new_kwargs.copy()
+        # TODO: remove any kwargs no applicable to that particular handler
+        protocol = new_kwargs.pop('protocol', None)
+        HandlerClass = self.get_handler_class(protocol)
+        # cleanup old handler and make new one
+        if self._handler:
+            self._handler.close()
+        logger.debug('Creating external log handler due to startup or settings change.')
+        self._handler = HandlerClass(**new_kwargs)
+        if self.formatter:
+            # self.format(record) is called inside of emit method
+            # so not safe to assume this can be handled within self
+            self._handler.setFormatter(self.formatter)
+        return self._handler
+
+    @cachetools.cached(cache=TTLCache(maxsize=1, ttl=3), key=lambda *args, **kw: 'should_audit')
+    def should_audit(self):
+        return settings.LOG_AGGREGATOR_AUDIT
+
+    def emit(self, record):
+        if AWXProxyHandler.thread_local.enabled:
+            actual_handler = self.get_handler()
+            if self.should_audit():
+                self.auditor.setLevel(settings.LOG_AGGREGATOR_LEVEL)
+                self.auditor.emit(record)
+            return actual_handler.emit(record)
+
+    def perform_test(self, custom_settings):
+        """
+        Tests logging connectivity for given settings module.
+        @raises LoggingConnectivityException
+        """
+        handler = self.get_handler(custom_settings=custom_settings, force_create=True)
+        handler.setFormatter(LogstashFormatter())
+        logger = logging.getLogger(__file__)
+        fn, lno, func, _ = logger.findCaller()
+        record = logger.makeRecord('awx', 10, fn, lno,
+                                   'AWX Connection Test', tuple(),
+                                   None, func)
+        futures = handler.emit(record)
+        for future in futures:
+            try:
+                resp = future.result()
+                if not resp.ok:
+                    if isinstance(resp, SocketResult):
+                        raise LoggingConnectivityException(
+                            'Socket error: {}'.format(resp.reason or '')
+                        )
+                    else:
+                        raise LoggingConnectivityException(
+                            ': '.join([str(resp.status_code), resp.reason or ''])
+                        )
+            except RequestException as e:
+                raise LoggingConnectivityException(str(e))
+
+    @classmethod
+    def disable(cls):
+        cls.thread_local.enabled = False
+
+
+AWXProxyHandler.thread_local.enabled = True
 
 
 ColorHandler = logging.StreamHandler
@@ -340,41 +428,3 @@ if settings.COLOR_LOGS is True:
     except ImportError:
         # logutils is only used for colored logs in the dev environment
         pass
-
-
-def _add_or_remove_logger(address, instance):
-    specific_logger = logging.getLogger(address)
-    for i, handler in enumerate(specific_logger.handlers):
-        if isinstance(handler, (HTTPSNullHandler, BaseHTTPSHandler)):
-            specific_logger.handlers[i] = instance or HTTPSNullHandler()
-            break
-    else:
-        if instance is not None:
-            specific_logger.handlers.append(instance)
-
-
-def configure_external_logger(settings_module, is_startup=True):
-    is_enabled = settings_module.LOG_AGGREGATOR_ENABLED
-    if is_startup and (not is_enabled):
-        # Pass-through if external logging not being used
-        return
-
-    instance = None
-    if is_enabled:
-        handler_class = HANDLER_MAPPING[settings_module.LOG_AGGREGATOR_PROTOCOL]
-        instance = handler_class.from_django_settings(settings_module)
-
-        # Obtain the Formatter class from settings to maintain customizations
-        configurator = logging.config.DictConfigurator(settings_module.LOGGING)
-        formatter_config = settings_module.LOGGING['formatters']['json'].copy()
-        formatter_config['settings_module'] = settings_module
-        formatter = configurator.configure_custom(formatter_config)
-
-        instance.setFormatter(formatter)
-
-    awx_logger_instance = instance
-    if is_enabled and 'awx' not in settings_module.LOG_AGGREGATOR_LOGGERS:
-        awx_logger_instance = None
-
-    _add_or_remove_logger('awx.analytics', instance)
-    _add_or_remove_logger('awx', awx_logger_instance)

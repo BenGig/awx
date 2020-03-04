@@ -1,19 +1,19 @@
 # Python
-from collections import namedtuple
 import contextlib
 import logging
+import re
 import sys
 import threading
 import time
-
-import six
+import urllib.parse
 
 # Django
 from django.conf import LazySettings
 from django.conf import settings, UserSettingsHolder
 from django.core.cache import cache as django_cache
 from django.core.exceptions import ImproperlyConfigured
-from django.db import ProgrammingError, OperationalError
+from django.db import transaction, connection
+from django.db.utils import Error as DBError
 from django.utils.functional import cached_property
 
 # Django REST Framework
@@ -21,7 +21,6 @@ from rest_framework.fields import empty, SkipField
 
 # Tower
 from awx.main.utils import encrypt_field, decrypt_field
-from awx.main.utils.db import get_tower_migration_version
 from awx.conf import settings_registry
 from awx.conf.models import Setting
 from awx.conf.migrations._reencrypt import decrypt_field as old_decrypt_field
@@ -58,23 +57,58 @@ SETTING_CACHE_DEFAULTS = True
 __all__ = ['SettingsWrapper', 'get_settings_to_cache', 'SETTING_CACHE_NOTSET']
 
 
+def normalize_broker_url(value):
+    parts = value.rsplit('@', 1)
+    match = re.search('(amqp://[^:]+:)(.*)', parts[0])
+    if match:
+        prefix, password = match.group(1), match.group(2)
+        parts[0] = prefix + urllib.parse.quote(password)
+    return '@'.join(parts)
+
+
 @contextlib.contextmanager
-def _log_database_error():
+def _ctit_db_wrapper(trans_safe=False):
+    '''
+    Wrapper to avoid undesired actions by Django ORM when managing settings
+    if only getting a setting, can use trans_safe=True, which will avoid
+    throwing errors if the prior context was a broken transaction.
+    Any database errors will be logged, but exception will be suppressed.
+    '''
+    rollback_set = None
+    is_atomic = None
     try:
+        if trans_safe:
+            is_atomic = connection.in_atomic_block
+            if is_atomic:
+                rollback_set = transaction.get_rollback()
+                if rollback_set:
+                    logger.debug('Obtaining database settings in spite of broken transaction.')
+                    transaction.set_rollback(False)
         yield
-    except (ProgrammingError, OperationalError) as e:
-        if get_tower_migration_version() < '310':
-            logger.info('Using default settings until version 3.1 migration.')
+    except DBError:
+        if trans_safe:
+            if 'migrate' not in sys.argv and 'check_migrations' not in sys.argv:
+                logger.exception('Database settings are not available, using defaults.')
         else:
-            logger.warning('Database settings are not available, using defaults (%s)', e, exc_info=True)
+            logger.exception('Error modifying something related to database settings.')
     finally:
-        pass
+        if trans_safe and is_atomic and rollback_set:
+            transaction.set_rollback(rollback_set)
 
 
 def filter_sensitive(registry, key, value):
     if registry.is_setting_encrypted(key):
         return '$encrypted$'
     return value
+
+
+class TransientSetting(object):
+
+    __slots__ = ('pk', 'value')
+
+    def __init__(self, pk, value):
+        self.pk = pk
+        self.value = value
 
 
 class EncryptedCacheProxy(object):
@@ -104,16 +138,6 @@ class EncryptedCacheProxy(object):
     def get(self, key, **kwargs):
         value = self.cache.get(key, **kwargs)
         value = self._handle_encryption(self.decrypter, key, value)
-
-        # python-memcached auto-encodes unicode on cache set in python2
-        # https://github.com/linsomniac/python-memcached/issues/79
-        # https://github.com/linsomniac/python-memcached/blob/288c159720eebcdf667727a859ef341f1e908308/memcache.py#L961
-        if six.PY2 and isinstance(value, six.binary_type):
-            try:
-                six.text_type(value)
-            except UnicodeDecodeError:
-                value = value.decode('utf-8')
-        logger.debug('cache get(%r, %r) -> %r', key, empty, filter_sensitive(self.registry, key, value))
         return value
 
     def set(self, key, value, log=True, **kwargs):
@@ -136,8 +160,6 @@ class EncryptedCacheProxy(object):
             self.set(key, value, log=False, **kwargs)
 
     def _handle_encryption(self, method, key, value):
-        TransientSetting = namedtuple('TransientSetting', ['pk', 'value'])
-
         if value is not empty and self.registry.is_setting_encrypted(key):
             # If the setting exists in the database, we'll use its primary key
             # as part of the AES key when encrypting/decrypting
@@ -245,7 +267,7 @@ class SettingsWrapper(UserSettingsHolder):
             self.__dict__['_awx_conf_preload_expires'] = time.time() + SETTING_CACHE_TIMEOUT
             # Check for any settings that have been defined in Python files and
             # make those read-only to avoid overriding in the database.
-            if not self._awx_conf_init_readonly and 'migrate_to_database_settings' not in sys.argv:
+            if not self._awx_conf_init_readonly:
                 defaults_snapshot = self._get_default('DEFAULTS_SNAPSHOT')
                 for key in get_writeable_settings(self.registry):
                     init_default = defaults_snapshot.get(key, None)
@@ -305,7 +327,7 @@ class SettingsWrapper(UserSettingsHolder):
         settings_to_cache['_awx_conf_preload_expires'] = self._awx_conf_preload_expires
         self.cache.set_many(settings_to_cache, timeout=SETTING_CACHE_TIMEOUT)
 
-    def _get_local(self, name):
+    def _get_local(self, name, validate=True):
         self._preload_cache()
         cache_key = Setting.get_cache_key(name)
         try:
@@ -327,8 +349,9 @@ class SettingsWrapper(UserSettingsHolder):
             setting = None
             setting_id = None
             if not field.read_only or name in (
-                # these two values are read-only - however - we *do* want
+                # these values are read-only - however - we *do* want
                 # to fetch their value from the database
+                'INSTALL_UUID',
                 'AWX_ISOLATED_PRIVATE_KEY',
                 'AWX_ISOLATED_PUBLIC_KEY',
             ):
@@ -368,7 +391,10 @@ class SettingsWrapper(UserSettingsHolder):
                     field.run_validators(internal_value)
                     return internal_value
                 else:
-                    return field.run_validation(value)
+                    if validate:
+                        return field.run_validation(value)
+                    else:
+                        return value
             except Exception:
                 logger.warning(
                     'The current value "%r" for setting "%s" is invalid.',
@@ -385,11 +411,20 @@ class SettingsWrapper(UserSettingsHolder):
     def __getattr__(self, name):
         value = empty
         if name in self.all_supported_settings:
-            with _log_database_error():
+            with _ctit_db_wrapper(trans_safe=True):
                 value = self._get_local(name)
         if value is not empty:
             return value
-        return self._get_default(name)
+        value = self._get_default(name)
+        # sometimes users specify RabbitMQ passwords that contain
+        # unescaped : and @ characters that confused urlparse, e.g.,
+        # amqp://guest:a@ns:ibl3#@localhost:5672//
+        #
+        # detect these scenarios, and automatically escape the user's
+        # password so it just works
+        if name == 'BROKER_URL':
+            value = normalize_broker_url(value)
+        return value
 
     def _set_local(self, name, value):
         field = self.registry.get_setting_field(name)
@@ -417,7 +452,7 @@ class SettingsWrapper(UserSettingsHolder):
 
     def __setattr__(self, name, value):
         if name in self.all_supported_settings:
-            with _log_database_error():
+            with _ctit_db_wrapper():
                 self._set_local(name, value)
         else:
             setattr(self.default_settings, name, value)
@@ -433,14 +468,14 @@ class SettingsWrapper(UserSettingsHolder):
 
     def __delattr__(self, name):
         if name in self.all_supported_settings:
-            with _log_database_error():
+            with _ctit_db_wrapper():
                 self._del_local(name)
         else:
             delattr(self.default_settings, name)
 
     def __dir__(self):
         keys = []
-        with _log_database_error():
+        with _ctit_db_wrapper(trans_safe=True):
             for setting in Setting.objects.filter(
                     key__in=self.all_supported_settings, user__isnull=True):
                 # Skip returning settings that have been overridden but are
@@ -457,7 +492,7 @@ class SettingsWrapper(UserSettingsHolder):
     def is_overridden(self, setting):
         set_locally = False
         if setting in self.all_supported_settings:
-            with _log_database_error():
+            with _ctit_db_wrapper(trans_safe=True):
                 set_locally = Setting.objects.filter(key=setting, user__isnull=True).exists()
         set_on_default = getattr(self.default_settings, 'is_overridden', lambda s: False)(setting)
         return (set_locally or set_on_default)

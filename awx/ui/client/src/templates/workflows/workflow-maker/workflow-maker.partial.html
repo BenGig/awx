@@ -4,7 +4,7 @@
             <div class="Modal-content modal-content">
                 <div class="Modal-header">
                     <div class="Modal-title">
-                        <span>DELETE</span>
+                        <span>{{strings.get('DELETE')}}</span>
                         <span class="Modal-titleResourceName" ng-bind="nodeToBeDeleted.unifiedJobTemplate.name"></span>
                     </div>
                     <div class="Modal-exitHolder">
@@ -14,21 +14,51 @@
                     </div>
                 </div>
                 <div class="Modal-body ng-binding">
-                    <div class="Prompt-bodyQuery">Are you sure you want to delete this workflow node?</div>
+                    <div class="Prompt-bodyQuery">{{strings.get('workflow_maker.DELETE_NODE_PROMPT_TEXT')}}</div>
                 </div>
                 <div class="Modal-footer">
-                    <button ng-click="cancelDeleteNode()" class="btn Modal-defaultButton Modal-footerButton">CANCEL</a>
-                    <button ng-click="confirmDeleteNode()" class="btn Modal-footerButton ng-binding Modal-errorButton">DELETE</a>
+                    <button ng-click="cancelDeleteNode()" class="btn Modal-defaultButton Modal-footerButton">{{strings.get('CANCEL')}}</button>
+                    <button ng-click="confirmDeleteNode()" class="btn Modal-footerButton ng-binding Modal-errorButton">{{strings.get('DELETE')}}</button>
+                </div>
+            </div>
+        </div>
+    </div>
+    <div class="WorkflowMaker-unsavedChangesOverlay" ng-show="unsavedChangesVisible">
+        <div class="modal-dialog">
+            <div class="Modal-content modal-content">
+                <div class="Modal-header">
+                    <div class="Modal-title">
+                        <span>{{strings.get('workflow_maker.UNSAVED_CHANGES_HEADER')}}</span>
+                    </div>
+                    <div class="Modal-exitHolder">
+                        <button class="close Modal-exit" ng-click="cancelUnsavedChanges()">
+                            <i class="fa fa-times-circle"></i>
+                        </button>
+                    </div>
+                </div>
+                <div class="Modal-body ng-binding">
+                    <div class="Prompt-bodyQuery">{{strings.get('workflow_maker.UNSAVED_CHANGES_PROMPT_TEXT')}}</div>
+                </div>
+                <div class="Modal-footer">
+                    <button ng-click="closeDialog(true)" class="btn Modal-footerButton Modal-errorButton">{{strings.get('workflow_maker.EXIT')}}</button>
+                    <button ng-click="cancelUnsavedChanges()" class="btn Modal-footerButton Modal-defaultButton">{{strings.get('workflow_maker.CANCEL')}}</button>
+                    <button
+                        ng-hide="formState.showNodeForm || formState.showLinkForm"
+                        ng-click="saveWorkflowMaker()"
+                        class="btn Modal-footerButton btn-success"
+                    >
+                        {{strings.get('workflow_maker.SAVE_AND_EXIT')}}
+                </button>
                 </div>
             </div>
         </div>
     </div>
     <div class="WorkflowMaker-header">
         <div class="WorkflowMaker-title">
-            <div class="WorkflowMaker-titleText">{{ workflowJobTemplateObj.name }}</div>
+            <div class="WorkflowMaker-titleText">{{strings.get('workflow_maker.TITLE')}} | {{ workflowJobTemplateObj.name }}</div>
         </div>
         <div class="WorkflowMaker-exitHolder">
-            <button class="WorkflowMaker-exit" ng-click="closeWorkflowMaker()">
+            <button class="WorkflowMaker-exit" ng-click="closeDialog()">
                 <i class="fa fa-times-circle"></i>
             </button>
         </div>
@@ -37,93 +67,44 @@
         <div class="WorkflowMaker-contentLeft">
             <div class="WorkflowLegend-maker">
                 <div class="WorkflowLegend-maker--left">
-                    <i ng-class="{{ keyClassList }}" class="fa fa-key Key-menuIcon" ng-click="toggleKey()"></i>
-                    <ul ng-show="showKey" class="Key-list noselect">
-                        <li class="Key-listItem">
-                            <p class="Key-heading">KEY</p>
-                        </li>
-                        <li class="Key-listItem">
-                            <div class="Key-icon Key-icon--success"></div>
-                            <p class="Key-listItemContent">On Success</p>
-                        </li>
-                        <li class="Key-listItem">
-                            <div class="Key-icon Key-icon--fail"></div>
-                            <p class="Key-listItemContent">On Fail</p>
-                        </li>
-                        <li class="Key-listItem">
-                            <div class="Key-icon Key-icon--always"></div>
-                            <p class="Key-listItemContent">Always</p>
-                        </li>
-                        <li class="Key-listItem">
-                            <div class="Key-icon Key-icon--circle Key-icon--default">P</div>
-                            <p class="Key-listItemContent Key-listItemContent--circle">Project Sync</p>
-                        </li>
-                        <li class="Key-listItem">
-                            <div class="Key-icon Key-icon--circle Key-icon--default">I</div>
-                            <p class="Key-listItemContent Key-listItemContent--circle">Inventory Sync</p>
-                        </li>
-                        <li class="Key-listItem">
-                            <div class="Key-icon Key-icon--circle Key-icon--warning">!</div>
-                            <p class="Key-listItemContent Key-listItemContent--circle">Warning</p>
-                        </li>
-                    </ul>
+                    <i ng-class="{{ keyClassList }}" class="fa fa-compass Key-menuIcon" ng-click="toggleKey()"></i>
+                    <workflow-key ng-show="showKey"></workflow-key>
                 </div>
                 <div class="WorkflowLegend-maker--right">
-                    <span class="WorkflowMaker-totalJobs">TOTAL TEMPLATES</span>
-                    <span class="badge List-titleBadge" ng-bind="treeData.data.totalNodes"></span>
+                    <span class="WorkflowMaker-totalJobs">{{strings.get('workflow_maker.TOTAL_NODES')}}</span>
+                    <span class="badge List-titleBadge" ng-bind="graphState.arrayOfNodesForChart.length === 0 ? graphState.arrayOfNodesForChart.length : graphState.arrayOfNodesForChart.length-1"></span>
                     <i ng-class="{'WorkflowMaker-manualControlsIcon--active': showManualControls}" class="fa fa-cog WorkflowMaker-manualControlsIcon" aria-hidden="true" alt="Controls" ng-click="toggleManualControls()"></i>
                     <div ng-show="showManualControls" class="WorkflowMaker-manualControls noselect">
                         <workflow-controls class="WorkflowControls" pan-chart="panChart(direction)" zoom-chart="zoomChart(zoom)" reset-chart="resetChart()" zoom-to-fit-chart="zoomToFitChart()"></workflow-controls>
                     </div>
                 </div>
             </div>
-            <workflow-chart ng-if="modalOpen" tree-data="treeData.data" add-node="startAddNode(parent, betweenTwoNodes)" edit-node="startEditNode(nodeToEdit)" delete-node="startDeleteNode(nodeToDelete)" workflow-zoomed="workflowZoomed(zoom)" can-add-workflow-job-template="canAddWorkflowJobTemplate" workflow-job-template-obj="workflowJobTemplateObj" mode="edit" class="WorkflowMaker-chart"></workflow-chart>
+            <workflow-chart
+                ng-if="modalOpen"
+                graph-state="graphState"
+                add-node-without-child="startAddNodeWithoutChild(parent)"
+                add-node-with-child="startAddNodeWithChild(link)"
+                edit-node="startEditNode(nodeToEdit)"
+                edit-link="startEditLink(linkToEdit)"
+                select-node-for-linking="selectNodeForLinking(nodeToStartLink)"
+                delete-node="startDeleteNode(nodeToDelete)"
+                workflow-zoomed="workflowZoomed(zoom)"
+                read-only="readOnly"
+                mode="edit"
+                class="WorkflowMaker-chart">
+            </workflow-chart>
         </div>
         <div class="WorkflowMaker-contentRight">
-            <div class="WorkflowMaker-formTitle">{{(workflowMakerFormConfig.nodeMode === 'edit' && nodeBeingEdited) ? ((nodeBeingEdited.unifiedJobTemplate && nodeBeingEdited.unifiedJobTemplate.name) ? nodeBeingEdited.unifiedJobTemplate.name : "EDIT TEMPLATE") : "ADD A TEMPLATE"}}</div>
-            <div class="WorkflowMaker-formHelp" ng-show="workflowMakerFormConfig.nodeMode === 'idle'" ng-bind="treeData.data.totalNodes === 0 ? 'Please click the start button to build your workflow.' : 'Please hover over a template for additional options.'"></div>
-            <div class="WorkflowMaker-form" ng-show="workflowMakerFormConfig.nodeMode === 'add' || workflowMakerFormConfig.nodeMode === 'edit'">
-                <div class="Form-tabHolder">
-                    <div class="Form-tab WorkflowMaker-formTab" ng-class="{'is-selected': workflowMakerFormConfig.activeTab === 'jobs'}" ng-click="toggleFormTab('jobs')">JOBS</div>
-                    <div class="Form-tab WorkflowMaker-formTab" ng-class="{'is-selected': workflowMakerFormConfig.activeTab === 'project_sync'}" ng-click="toggleFormTab('project_sync')">PROJECT SYNC</div>
-                    <div class="Form-tab WorkflowMaker-formTab" ng-class="{'is-selected': workflowMakerFormConfig.activeTab === 'inventory_sync'}" ng-click="toggleFormTab('inventory_sync')">INVENTORY SYNC</div>
-                </div>
-                <div class="WorkflowMaker-formLists">
-                    <div id="workflow-jobs-list"  ui-view="jobTemplateList" ng-show="workflowMakerFormConfig.activeTab === 'jobs'"></div>
-                    <div id="workflow-project-sync-list" ng-show="workflowMakerFormConfig.activeTab === 'project_sync'" ui-view="projectSyncList"></div>
-                    <div id="workflow-inventory-sync-list" ng-show="workflowMakerFormConfig.activeTab === 'inventory_sync'" ui-view="inventorySyncList"></div>
-                </div>
-                <div ng-show="selectedTemplate">
-                    <div class="form-group Form-formGroup Form-formGroup--singleColumn">
-                        <label for="verbosity" class="Form-inputLabelContainer">
-                            <span class="Form-requiredAsterisk">*</span>
-                            <span class="Form-inputLabel">RUN</span>
-                        </label>
-                        <div>
-                            <select
-                                id="workflow_node_edge"
-                                ng-options="v as v.label for v in edgeTypeOptions track by v.value"
-                                ng-model="edgeType"
-                                class="form-control Form-dropDown"
-                                name="edgeType"
-                                tabindex="-1"
-                                aria-hidden="true">
-                            </select>
-                        </div>
-                    </div>
-                    <div class="buttons Form-buttons" id="workflow_maker_controls">
-                        <button type="button" class="btn btn-sm Form-primaryButton Form-primaryButton--noMargin" id="workflow_maker_prompt_btn" ng-show="showPromptButton" ng-click="openPromptModal()"> Prompt</button>
-                        <button type="button" class="btn btn-sm Form-cancelButton" id="workflow_maker_cancel_btn" ng-show="(workflowJobTemplateObj.summary_fields.user_capabilities.edit || canAddWorkflowJobTemplate)" ng-click="cancelNodeForm()"> Cancel</button>
-                        <button type="button" class="btn btn-sm Form-cancelButton" id="workflow_maker_close_btn" ng-show="!(workflowJobTemplateObj.summary_fields.user_capabilities.edit || canAddWorkflowJobTemplate)" ng-click="cancelNodeForm()"> Close</button>
-                        <button type="button" class="btn btn-sm Form-saveButton" id="workflow_maker_select_btn" ng-show="(workflowJobTemplateObj.summary_fields.user_capabilities.edit || canAddWorkflowJobTemplate)" ng-click="confirmNodeForm()" ng-disabled="workflow_maker_form.$invalid || !selectedTemplate || promptModalMissingReqFields" disabled="disabled"> Select</button>
-                    </div>
-                </div>
-            </div>
+            <span ng-if="formState.showNodeForm">
+                <workflow-node-form node-config="nodeConfig" workflow-job-template-obj="workflowJobTemplateObj" select="confirmNodeForm(nodeFormData)" cancel="cancelNodeForm()" read-only="!workflowJobTemplateObj.summary_fields.user_capabilities.edit"/>
+            </span>
+            <span ng-if="formState.showLinkForm">
+                <workflow-link-form link-config="linkConfig" read-only="!workflowJobTemplateObj.summary_fields.user_capabilities.edit" select="confirmLinkForm(edgeType)" cancel="cancelLinkForm()" unlink="unlink()"/>
+            </span>
         </div>
     </div>
     <div class="WorkflowMaker-buttonHolder">
-        <button type="button" class="btn btn-sm WorkflowMaker-cancelButton" ng-click="closeWorkflowMaker()"> Close</button>
-        <button type="button" class="btn btn-sm WorkflowMaker-saveButton" ng-click="saveWorkflowMaker()" ng-show="workflowJobTemplateObj.summary_fields.user_capabilities.edit || canAddWorkflowJobTemplate" ng-disabled="edgeFlags.conflict || workflowMakerFormConfig.nodeMode === 'add'"> Save</button>
+        <button type="button" class="btn btn-sm WorkflowMaker-cancelButton" ng-click="closeDialog()"> {{:: strings.get('CLOSE') }}</button>
+        <button type="button" class="btn btn-sm WorkflowMaker-saveButton" ng-click="saveWorkflowMaker()" ng-show="workflowJobTemplateObj.summary_fields.user_capabilities.edit || canAddOrEdit" ng-disabled="formState.showNodeForm || formState.showLinkForm"> {{:: strings.get('SAVE') }}</button>
     </div>
-    <prompt prompt-data="promptData" action-text="CONFIRM"></launch>
 </div>

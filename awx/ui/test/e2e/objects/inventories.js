@@ -18,7 +18,7 @@ const standardInvDetails = createFormSection({
             '#inventory_form .Form-textArea',
             '#inventory_form input[type="checkbox"]',
             '#inventory_form .ui-spinner-input',
-            '#inventory_form .ScheduleToggle-switch'
+            '#inventory_form .atSwitch-inner'
         ]
     },
     labels: {
@@ -88,7 +88,7 @@ module.exports = {
             }
         },
         list: {
-            selector: '.Panel',
+            selector: '.at-Panel',
             elements: {
                 badge: 'span[class~="badge"]',
                 title: 'div[class="List-titleText"]',
@@ -121,9 +121,9 @@ module.exports = {
             return this.navigate();
         },
         selectAdd (name) {
-            this.api.waitForElementVisible('button span[class="List-dropdownCarat"]');
-            this.expect.element('button span[class="List-dropdownCarat"]').enabled;
-            this.api.click('button span[class="List-dropdownCarat"]');
+            this.api.waitForElementVisible('#button-add');
+            this.expect.element('#button-add').enabled;
+            this.api.click('#button-add');
 
             this.api.useXpath();
             this.api.waitForElementVisible(`.//a[normalize-space(text())="${name}"]`);

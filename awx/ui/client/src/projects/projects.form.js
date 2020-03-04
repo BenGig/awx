@@ -52,22 +52,11 @@ export default ['i18n', 'NotificationsList', 'TemplateList',
                 ngDisabled: '!(project_obj.summary_fields.user_capabilities.edit || canAdd) || !canEditOrg',
                 awLookupWhen: '(project_obj.summary_fields.user_capabilities.edit || canAdd) && canEditOrg'
             },
-            custom_virtualenv: {
-                label: i18n._('Ansible Environment'),
-                type: 'select',
-                defaultText: i18n._('Select Ansible Environment'),
-                ngOptions: 'venv for venv in custom_virtualenvs_options track by venv',
-                awPopOver: "<p>" + i18n._("Select the custom Python virtual environment for this project to run on.") + "</p>",
-                dataTitle: i18n._('Ansible Environment'),
-                dataContainer: 'body',
-                dataPlacement: 'right',
-                ngDisabled: '!(project_obj.summary_fields.user_capabilities.edit || canAdd)'
-            },
             scm_type: {
                 label: i18n._('SCM Type'),
                 type: 'select',
                 class: 'Form-dropDown--scmType',
-                defaultText: 'Choose an SCM Type',
+                defaultText: i18n._('Choose an SCM Type'),
                 ngOptions: 'type.label for type in scm_type_options track by type.value',
                 ngChange: 'scmChange()',
                 required: true,
@@ -91,7 +80,7 @@ export default ['i18n', 'NotificationsList', 'TemplateList',
                 ngShow: "scm_type.value == 'manual' " ,
                 awPopOver: '<p>' + i18n._('Base path used for locating playbooks. Directories found inside this path will be listed in the playbook directory drop-down. ' +
                     'Together the base path and selected playbook directory provide the full path used to locate playbooks.') + '</p>' +
-                    '<p>' + i18n.sprintf(i18n._('Change %s under "Configure {{BRAND_NAME}}" to change this location.'), 'PROJECTS_ROOT') + '</p>',
+                    '<p>' + i18n.sprintf(i18n._('Change %s when deploying {{BRAND_NAME}} to change this location.'), 'PROJECTS_ROOT') + '</p>',
                 dataTitle: i18n._('Project Base Path'),
                 dataContainer: 'body',
                 dataPlacement: 'right',
@@ -115,7 +104,7 @@ export default ['i18n', 'NotificationsList', 'TemplateList',
                 ngDisabled: '!(project_obj.summary_fields.user_capabilities.edit || canAdd)'
             },
             scm_url: {
-                label: 'SCM URL',
+                label: i18n._('SCM URL'),
                 type: 'text',
                 ngShow: "scm_type && scm_type.value !== 'manual' && scm_type.value !== 'insights' ",
                 awRequiredWhen: {
@@ -126,7 +115,7 @@ export default ['i18n', 'NotificationsList', 'TemplateList',
                 hideSubForm: "scm_type.value === 'manual'",
                 awPopOverWatch: "urlPopover",
                 awPopOver: "set in controllers/projects",
-                dataTitle: 'SCM URL',
+                dataTitle: i18n._('SCM URL'),
                 dataContainer: 'body',
                 dataPlacement: 'right',
                 ngDisabled: '!(project_obj.summary_fields.user_capabilities.edit || canAdd)'
@@ -136,6 +125,24 @@ export default ['i18n', 'NotificationsList', 'TemplateList',
                 type: 'text',
                 ngShow: "scm_type && scm_type.value !== 'manual' && scm_type.value !== 'insights'",
                 ngDisabled: '!(project_obj.summary_fields.user_capabilities.edit || canAdd)',
+                awPopOver: '<p>' + i18n._("Branch to checkout.  In addition to branches, you can input tags, commit hashes, and arbitrary refs.  Some commit hashes and refs may not be availble unless you also provide a custom refspec.") + '</p>',
+                dataTitle: i18n._('SCM Branch'),
+                subForm: 'sourceSubForm',
+            },
+            scm_refspec: {
+                labelBind: "scmRefspecLabel",
+                type: 'text',
+                ngShow: "scm_type && scm_type.value === 'git'",
+                ngDisabled: '!(project_obj.summary_fields.user_capabilities.edit || canAdd)',
+                awPopOver: '<p>' + i18n._('A refspec to fetch (passed to the Ansible git module).  This parameter allows access to references via the branch field not otherwise available.') + '</p>' +
+                    '<p>' + i18n._('NOTE: This field assumes the remote name is "origin".') + '</p>' +
+                    '<p>' + i18n._('Examples include:') + '</p>' +
+                    '</p><ul class=\"no-bullets\"><li>refs/*:refs/remotes/origin/*</li>' +
+                    '<li>refs/pull/62/head:refs/remotes/origin/pull/62/head</li></ul>' +
+                    '<p>' + i18n._('The first fetches all references.  The second fetches the Github pull request number 62, in this example the branch needs to be `pull/62/head`.') +
+                    '</p>' +
+                    '<p>' + i18n._('For more information, refer to the') + '<a target="_blank" href="https://docs.ansible.com/ansible-tower/latest/html/userguide/projects.html#manage-playbooks-using-source-control"> ' + i18n._('Ansible Tower Documentation') + '</a>.</p>',
+                dataTitle: i18n._('SCM Refspec'),
                 subForm: 'sourceSubForm',
             },
             credential: {
@@ -194,6 +201,18 @@ export default ['i18n', 'NotificationsList', 'TemplateList',
                     dataPlacement: 'right',
                     labelClass: 'checkbox-options stack-inline',
                     ngDisabled: '!(project_obj.summary_fields.user_capabilities.edit || canAdd)'
+                },
+                {
+                    name: 'allow_override',
+                    label: i18n._('Allow branch override'),
+                    type: 'checkbox',
+                    awPopOver: '<p>' + i18n._('Allow changing the SCM branch or revision in a job template that uses this project.') + '</p>',
+                    dataTitle: i18n._('Allow branch override'),
+                    dataContainer: 'body',
+                    dataPlacement: 'right',
+                    labelClass: 'checkbox-options stack-inline',
+                    ngDisabled: '!(project_obj.summary_fields.user_capabilities.edit || canAdd)',
+                    ngShow: "scm_type && scm_type.value !== 'insights'",
                 }]
             },
             scm_update_cache_timeout: {
@@ -211,8 +230,21 @@ export default ['i18n', 'NotificationsList', 'TemplateList',
                 dataTitle: i18n._('Cache Timeout'),
                 dataPlacement: 'right',
                 dataContainer: "body",
-                ngDisabled: '!(project_obj.summary_fields.user_capabilities.edit || canAdd)'
-            }
+                ngDisabled: '!(project_obj.summary_fields.user_capabilities.edit || canAdd)',
+                subForm: 'sourceSubForm'
+            },
+            custom_virtualenv: {
+                label: i18n._('Ansible Environment'),
+                type: 'select',
+                defaultText: i18n._('Use Default Environment'),
+                ngOptions: 'venv for venv in custom_virtualenvs_options track by venv',
+                awPopOver: "<p>" + i18n._("Select the custom Python virtual environment for this project to run on.") + "</p>",
+                dataTitle: i18n._('Ansible Environment'),
+                dataContainer: 'body',
+                dataPlacement: 'right',
+                ngDisabled: '!(project_obj.summary_fields.user_capabilities.edit || canAdd)',
+                ngShow: 'custom_virtualenvs_options.length > 1'
+            },
         },
 
         buttons: {
@@ -249,31 +281,32 @@ export default ['i18n', 'NotificationsList', 'TemplateList',
                 actions: {
                     add: {
                         ngClick: "$state.go('.add')",
-                        label: 'Add',
+                        label: i18n._('Add'),
                         awToolTip: i18n._('Add a permission'),
-                        actionClass: 'btn List-buttonSubmit',
-                        buttonContent: '&#43; ' + i18n._('ADD'),
+                        actionClass: 'at-Button--add',
+                        actionId: 'button-add',
                         ngShow: '(project_obj.summary_fields.user_capabilities.edit || canAdd)'
                     }
                 },
 
                 fields: {
                     username: {
+                        key: true,
                         label: i18n._('User'),
-                        uiSref: 'users({user_id: field.id})',
-                        class: 'col-lg-3 col-md-3 col-sm-3 col-xs-4'
+                        linkBase: 'users',
+                        columnClass: 'col-sm-3 col-xs-4'
                     },
                     role: {
                         label: i18n._('Role'),
                         type: 'role',
                         nosort: true,
-                        class: 'col-lg-4 col-md-4 col-sm-4 col-xs-4',
+                        columnClass: 'col-sm-4 col-xs-4',
                     },
                     team_roles: {
                         label: i18n._('Team Roles'),
                         type: 'team_roles',
                         nosort: true,
-                        class: 'col-lg-5 col-md-5 col-sm-5 col-xs-4',
+                        columnClass: 'col-sm-5 col-xs-4',
                     }
                 }
             },
@@ -283,6 +316,11 @@ export default ['i18n', 'NotificationsList', 'TemplateList',
             templates: {
                 include: "TemplateList",
             },
+            schedules: {
+                title: i18n._('Schedules'),
+                skipGenerator: true,
+                ngClick: "$state.go('projects.edit.schedules')"
+            }
         }
 
     };

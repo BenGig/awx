@@ -32,7 +32,7 @@ export default
             timeout: null,
 
             getSessionTime: function () {
-                if(Store('sessionTime')){
+                if(Store('sessionTime') && Store('sessionTime')[$rootScope.current_user.id]){
                     return Store('sessionTime')[$rootScope.current_user.id].time;
                 }
                 else {
@@ -157,6 +157,7 @@ export default
                                 title: i18n._("Idle Session"),
                                 scope: $rootScope,
                                 buttons: buttons,
+                                dialogClass: "no-close",
                                 width: 470,
                                 height: 240,
                                 minWidth: 200,

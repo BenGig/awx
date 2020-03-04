@@ -3,6 +3,9 @@
         <label for="job_type" class="Form-inputLabelContainer">
             <span class="Form-requiredAsterisk">*</span>
             <span class="Form-inputLabel" translate>{{:: vm.strings.get('prompt.JOB_TYPE') }}</span>
+            <a id="awp-job-type" href="" aw-pop-over="{{:: vm.strings.get('prompt.JOB_TYPE_HELP') }}" data-placement="right" data-container="body" over-title="{{:: vm.strings.get('prompt.JOB_TYPE') }}" class="help-link" data-original-title="" title="" tabindex="-1">
+                <i class="fa fa-question-circle"></i>
+            </a>
         </label>
         <div>
             <select
@@ -13,23 +16,51 @@
                 name="job_type"
                 tabindex="-1"
                 aria-hidden="true"
+                ng-disabled="readOnlyPrompts"
                 required>
                 <option value="" class="" selected="selected">{{:: vm.strings.get('prompt.CHOOSE_JOB_TYPE') }}</option>
             </select>
         </div>
     </div>
+    <div class="form-group Form-formGroup Form-formGroup--singleColumn" ng-if="promptData.launchConf.ask_scm_branch_on_launch">
+        <label for="scm_branch">
+            <span class="Form-inputLabel">{{:: vm.strings.get('prompt.SCM_BRANCH') }}</span>
+            <a id="awp-scm-branch" href="" aw-pop-over="{{:: vm.strings.get('prompt.SCM_BRANCH_HELP') }}" data-placement="right" data-container="body" over-title="{{:: vm.strings.get('prompt.SCM_BRANCH') }}" class="help-link" data-original-title="" title="" tabindex="-1">
+                <i class="fa fa-question-circle"></i>
+            </a>
+        </label>
+        <div>
+            <input
+                type="text"
+                ng-model="promptData.prompts.scmBranch.value"
+                name="scm_branch"
+                class="form-control Form-textInput"
+                ng-disabled="readOnlyPrompts">
+        </div>
+    </div>
     <div class="form-group Form-formGroup Form-formGroup--singleColumn" ng-if="promptData.launchConf.ask_limit_on_launch">
         <label for="limit">
             <span class="Form-inputLabel">{{:: vm.strings.get('prompt.LIMIT') }}</span>
+            <a id="awp-limit" href="" aw-pop-over="{{:: vm.strings.get('prompt.LIMIT_HELP') }}" data-placement="right" data-container="body" over-title="{{:: vm.strings.get('prompt.LIMIT') }}" class="help-link" data-original-title="" title="" tabindex="-1">
+                <i class="fa fa-question-circle"></i>
+            </a>
         </label>
         <div>
-            <input type="text" ng-model="promptData.prompts.limit.value" name="limit" class="form-control Form-textInput">
+            <input
+                type="text"
+                ng-model="promptData.prompts.limit.value"
+                name="limit"
+                class="form-control Form-textInput"
+                ng-disabled="readOnlyPrompts">
         </div>
     </div>
     <div class="form-group Form-formGroup Form-formGroup--singleColumn" ng-if="promptData.launchConf.ask_verbosity_on_launch">
         <label for="verbosity" class="Form-inputLabelContainer">
             <span class="Form-requiredAsterisk">*</span>
             <span class="Form-inputLabel">{{:: vm.strings.get('prompt.VERBOSITY') }}</span>
+            <a id="awp-verbosity" href="" aw-pop-over="{{:: vm.strings.get('prompt.VERBOSITY_HELP') }}" data-placement="right" data-container="body" over-title="{{:: vm.strings.get('prompt.VERBOSITY') }}" class="help-link" data-original-title="" title="" tabindex="-1">
+                <i class="fa fa-question-circle"></i>
+            </a>
         </label>
         <div>
             <select
@@ -40,6 +71,7 @@
                 name="verbosity"
                 tabindex="-1"
                 aria-hidden="true"
+                ng-disabled="readOnlyPrompts"
                 required>
                 <option value="" class="" selected="selected">{{:: vm.strings.get('prompt.CHOOSE_VERBOSITY') }}</option>
             </select>
@@ -48,6 +80,9 @@
     <div class="form-group Form-formGroup Form-formGroup--singleColumn" ng-if="promptData.launchConf.ask_tags_on_launch">
         <label for="tags">
             <span class="Form-inputLabel">{{:: vm.strings.get('prompt.JOB_TAGS') }}</span>
+            <a id="awp-job-tags" href="" aw-pop-over="{{:: vm.strings.get('prompt.JOB_TAGS_HELP') }}" data-placement="right" data-container="body" over-title="{{:: vm.strings.get('prompt.JOB_TAGS') }}" class="help-link" data-original-title="" title="" tabindex="-1">
+                <i class="fa fa-question-circle"></i>
+            </a>
         </label>
         <div>
             <select
@@ -58,6 +93,7 @@
                 name="job_tags"
                 tabindex="-1"
                 aria-hidden="true"
+                ng-disabled="readOnlyPrompts"
                 multiple>
             </select>
         </div>
@@ -65,6 +101,9 @@
     <div class="form-group Form-formGroup Form-formGroup--singleColumn" ng-if="promptData.launchConf.ask_skip_tags_on_launch">
         <label for="skip_tags">
             <span class="Form-inputLabel">{{:: vm.strings.get('prompt.SKIP_TAGS') }}</span>
+            <a id="awp-skip-tags" href="" aw-pop-over="{{:: vm.strings.get('prompt.SKIP_TAGS_HELP') }}" data-placement="right" data-container="body" over-title="{{:: vm.strings.get('prompt.SKIP_TAGS') }}" class="help-link" data-original-title="" title="" tabindex="-1">
+                <i class="fa fa-question-circle"></i>
+            </a>
         </label>
         <div>
             <select
@@ -75,6 +114,7 @@
                 name="skip_tags"
                 tabindex="-1"
                 aria-hidden="true"
+                ng-disabled="readOnlyPrompts"
                 multiple>
             </select>
         </div>
@@ -82,18 +122,18 @@
     <div class="form-group Form-formGroup Form-formGroup--singleColumn" ng-if="promptData.launchConf.ask_diff_mode_on_launch">
         <label for="diff_mode">
             <span class="Form-inputLabel">{{:: vm.strings.get('prompt.SHOW_CHANGES') }}</span>
+            <a id="awp-show-changes" href="" aw-pop-over="{{:: vm.strings.get('prompt.SHOW_CHANGES_HELP') }}" data-placement="right" data-container="body" over-title="{{:: vm.strings.get('prompt.SHOW_CHANGES') }}" class="help-link" data-original-title="" title="" tabindex="-1">
+                <i class="fa fa-question-circle"></i>
+            </a>
         </label>
         <div>
-            <div class="ScheduleToggle" ng-class="{'is-on': promptData.prompts.diffMode.value}" aw-tool-tip="" data-placement="top" data-original-title="" title="" ng-click="vm.toggleDiff()">
-                <button ng-show="promptData.prompts.diffMode.value" class="ScheduleToggle-switch is-on">{{:: vm.strings.get('ON') }}</button>
-                <button ng-show="!promptData.prompts.diffMode.value" class="ScheduleToggle-switch ng-hide">{{:: vm.strings.get('OFF') }}</button>
-            </div>
+            <at-switch on-toggle="vm.toggleDiff()" switch-on="promptData.prompts.diffMode.value" switch-disabled="readOnlyPrompts"></at-switch>
         </div>
     </div>
     <div class="form-group Form-formGroup Form-formGroup--singleColumn" ng-if="promptData.launchConf.ask_variables_on_launch && !promptData.prompts.variables.ignore">
         <label for="variables">
             <span class="Form-inputLabel">{{:: vm.strings.get('prompt.EXTRA_VARIABLES') }}</span>
-            <a id="awp-variables" href="" aw-pop-over="<p>Pass extra command line variables to the playbook. This is the -e or --extra-vars command line parameter for ansible-playbook. Provide key/value pairs using either YAML or JSON.</p>JSON:<br /><blockquote>{<br />&quot;somevar&quot;: &quot;somevalue&quot;,<br />&quot;password&quot;: &quot;magic&quot;<br /> }</blockquote>YAML:<br /><blockquote>---<br />somevar: somevalue<br />password: magic<br /></blockquote>" data-placement="right" data-container="body" over-title="Extra Variables" class="help-link" data-original-title="" title="" tabindex="-1">
+            <a id="awp-extra-variables" href="" aw-pop-over="{{:: vm.strings.get('prompt.EXTRA_VARIABLES_HELP')}}" data-placement="right" data-container="body" over-title="Extra Variables" class="help-link" data-original-title="" title="" tabindex="-1">
                 <i class="fa fa-question-circle"></i>
             </a>
             <div class="parse-selection" id="job_launch_variables_parse_type">
@@ -104,7 +144,7 @@
             </div>
         </label>
         <div>
-            <textarea rows="6" ng-model="promptData.prompts.variables.value" name="variables" class="form-control Form-textArea Form-textAreaLabel" id="job_launch_variables"></textarea>
+            <textarea rows="6" ng-model="promptData.prompts.variables.value" name="variables" class="form-control Form-textArea Form-textAreaLabel" id="job_launch_variables" ng-disabled="readOnlyPrompts"></textarea>
         </div>
     </div>
 </form>

@@ -10,7 +10,6 @@ import lookupModal from './lookup/main';
 import smartSearch from './smart-search/main';
 import paginate from './paginate/main';
 import columnSort from './column-sort/main';
-import lodashAsPromised from './lodash-as-promised';
 import filters from './filters/main';
 import truncatedText from './truncated-text.directive';
 import stateExtender from './stateExtender.provider';
@@ -29,11 +28,11 @@ import moment from './moment/main';
 import config from './config/main';
 import PromptDialog from './prompt-dialog';
 import directives from './directives';
-import features from './features/main';
 import orgAdminLookup from './org-admin-lookup/main';
 import limitPanels from './limit-panels/main';
 import multiSelectPreview from './multi-select-preview/main';
 import credentialTypesLookup from './credentialTypesLookup.factory';
+import utilities from './Utilities';
 
 export default
 angular.module('shared', [
@@ -60,15 +59,14 @@ angular.module('shared', [
         PromptDialog.name,
         directives.name,
         filters.name,
-        features.name,
         orgAdminLookup.name,
         limitPanels.name,
         multiSelectPreview.name,
+        utilities.name,
         'ngCookies',
         'angular-duration-format'
     ])
     .factory('stateDefinitions', stateDefinitions)
-    .factory('lodashAsPromised', lodashAsPromised)
     .factory('credentialTypesLookup', credentialTypesLookup)
     .directive('truncatedText', truncatedText)
     .provider('$stateExtender', stateExtender);

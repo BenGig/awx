@@ -1,9 +1,7 @@
 import _ from 'lodash';
 
-import actions from './sections/actions';
 import breadcrumb from './sections/breadcrumb';
 import createFormSection from './sections/createFormSection';
-import createTableSection from './sections/createTableSection';
 import header from './sections/header';
 import lookupModal from './sections/lookupModal';
 import navigation from './sections/navigation';
@@ -11,7 +9,7 @@ import pagination from './sections/pagination';
 import permissions from './sections/permissions';
 import search from './sections/search';
 
-const details = createFormSection({
+const jtDetails = createFormSection({
     selector: 'form',
     props: {
         formElementSelectors: [
@@ -20,13 +18,32 @@ const details = createFormSection({
             '#job_template_form .Form-textArea',
             '#job_template_form input[type="checkbox"]',
             '#job_template_form .ui-spinner-input',
-            '#job_template_form .ScheduleToggle-switch'
+            '#job_template_form .atSwitch-inner'
         ]
     },
     labels: {
         name: 'Name',
         description: 'Description',
         playbook: 'Playbook'
+
+    }
+});
+
+const wfjtDetails = createFormSection({
+    selector: 'form',
+    props: {
+        formElementSelectors: [
+            '#workflow_job_template_form .Form-textInput',
+            '#workflow_job_template_form select.Form-dropDown',
+            '#workflow_job_template_form .Form-textArea',
+            '#workflow_job_template_form input[type="checkbox"]',
+            '#workflow_job_template_form .ui-spinner-input',
+            '#workflow_job_template_form .atSwitch-inner'
+        ]
+    },
+    labels: {
+        name: 'Name',
+        description: 'Description'
 
     }
 });
@@ -54,7 +71,7 @@ module.exports = {
         addJobTemplate: {
             selector: 'div[ui-view="form"]',
             sections: {
-                details
+                jtDetails
             },
             elements: {
                 title: 'div[class^="Form-title"]'
@@ -63,7 +80,7 @@ module.exports = {
         editJobTemplate: {
             selector: 'div[ui-view="form"]',
             sections: {
-                details,
+                jtDetails,
                 permissions
             },
             elements: {
@@ -73,41 +90,34 @@ module.exports = {
         addWorkflowJobTemplate: {
             selector: 'div[ui-view="form"]',
             sections: {
-                details
+                wfjtDetails
             },
             elements: {
-                title: 'div[class^="Form-title"]'
+                title: 'div[class^="Form-title"]',
+                visualizerButton: '#workflow_job_template_workflow_visualizer_btn',
             }
         },
         editWorkflowJobTemplate: {
             selector: 'div[ui-view="form"]',
             sections: {
-                details,
+                wfjtDetails,
                 permissions
             },
             elements: {
-                title: 'div[class^="Form-title"]'
+                title: 'div[class^="Form-title"]',
+                visualizerButton: '#workflow_job_template_workflow_visualizer_btn',
             }
         },
         list: {
-            selector: '.Panel',
+            selector: '.at-Panel',
             elements: {
                 badge: 'span[class~="badge"]',
                 title: 'div[class="List-titleText"]',
-                add: 'button[class~="List-buttonSubmit"]'
+                add: '#button-add'
             },
             sections: {
                 search,
-                pagination,
-                table: createTableSection({
-                    elements: {
-                        name: 'td[class~="name-column"]',
-                        kind: 'td[class~="type-column"]'
-                    },
-                    sections: {
-                        actions
-                    }
-                })
+                pagination
             }
         }
     },
@@ -127,7 +137,7 @@ module.exports = {
             return this;
         },
         selectAdd (name) {
-            this.clickWhenEnabled('button span[class="at-List-toolbarDropdownCarat"]');
+            this.clickWhenEnabled('#button-add');
 
             this.api
                 .useXpath()
@@ -163,9 +173,10 @@ module.exports = {
                 .waitForElementVisible('div.spinny')
                 .waitForElementNotVisible('div.spinny');
 
-            this.section.lookupInventory.section.table
-                .waitForRowCount(1)
-                .clickRowByIndex(1);
+            this.api
+                .waitForElementNotPresent('#inventories_table .List-tableRow:nth-child(2)')
+                .waitForElementVisible('#inventories_table .List-tableRow:nth-child(1) input[type="radio"]')
+                .click('#inventories_table .List-tableRow:nth-child(1) input[type="radio"]');
 
             this.section.lookupInventory.expect.element('@save').enabled;
 
@@ -189,9 +200,10 @@ module.exports = {
                 .waitForElementVisible('div.spinny')
                 .waitForElementNotVisible('div.spinny');
 
-            this.section.lookupProject.section.table
-                .waitForRowCount(1)
-                .clickRowByIndex(1);
+            this.api
+                .waitForElementNotPresent('#projects_table .List-tableRow:nth-child(2)')
+                .waitForElementVisible('#projects_table .List-tableRow:nth-child(1) input[type="radio"]')
+                .click('#projects_table .List-tableRow:nth-child(1) input[type="radio"]');
 
             this.section.lookupProject.expect.element('@save').enabled;
 
@@ -229,9 +241,9 @@ module.exports = {
                 .click('multi-credential-modal smart-search i[class$="search"]')
                 .waitForElementVisible('div.spinny')
                 .waitForElementNotVisible('div.spinny')
-                .waitForElementNotPresent('multi-credential-modal tbody tr:nth-child(2)')
-                .waitForElementVisible('multi-credential-modal tbody tr:nth-child(1) input[type="checkbox"]')
-                .click('multi-credential-modal tbody tr:nth-child(1) input[type="checkbox"]')
+                .waitForElementNotPresent('multi-credential-modal .List-tableRow:nth-child(2)')
+                .waitForElementVisible('multi-credential-modal .List-tableRow:nth-child(1) input[type="checkbox"]')
+                .click('multi-credential-modal .List-tableRow:nth-child(1) input[type="checkbox"]')
                 .click('multi-credential-modal button[class*="save"]')
                 .pause(1000);
 
@@ -255,9 +267,9 @@ module.exports = {
                 .click('multi-credential-modal smart-search i[class$="search"]')
                 .waitForElementVisible('div.spinny')
                 .waitForElementNotVisible('div.spinny')
-                .waitForElementNotPresent('multi-credential-modal tbody tr:nth-child(2)')
-                .waitForElementVisible('multi-credential-modal tbody tr:nth-child(1) input[type="radio"]')
-                .click('multi-credential-modal tbody tr:nth-child(1) input[type="radio"]')
+                .waitForElementNotPresent('multi-credential-modal .List-tableRow:nth-child(2)')
+                .waitForElementVisible('multi-credential-modal .List-tableRow:nth-child(1) input[type="radio"]')
+                .click('multi-credential-modal .List-tableRow:nth-child(1) input[type="radio"]')
                 .click('multi-credential-modal button[class*="save"]')
                 .pause(1000);
 

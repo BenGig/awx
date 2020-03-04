@@ -5,17 +5,15 @@
  *************************************************/
 
 export default
-    ['ParseTypeChange', 'CreateSelect2', 'TemplatesStrings', '$timeout', function(ParseTypeChange, CreateSelect2, strings, $timeout) {
+    ['ParseTypeChange', 'CreateSelect2', 'TemplatesStrings', '$timeout', 'ToJSON', function(ParseTypeChange, CreateSelect2, strings, $timeout, ToJSON) {
             const vm = this;
 
             vm.strings = strings;
 
             let scope;
-            let launch;
 
-            vm.init = (_scope_, _launch_) => {
+            vm.init = (_scope_, controller, el) => {
                 scope = _scope_;
-                launch = _launch_;
 
                 scope.parseType = 'yaml';
 
@@ -55,6 +53,16 @@ export default
                 }
 
                 if(scope.promptData.launchConf.ask_tags_on_launch) {
+                    // Ensure that the options match the currently selected tags.  These two things
+                    // might get out of sync if the user re-opens the prompts before saving the
+                    // schedule/wf node
+                    scope.promptData.prompts.tags.options = _.map(scope.promptData.prompts.tags.value, function(tag){
+                        return {
+                            value: tag.value,
+                            name: tag.name,
+                            label: tag.label
+                        };
+                    });
                     CreateSelect2({
                         element: '#job_launch_job_tags',
                         multiple: true,
@@ -63,6 +71,16 @@ export default
                 }
 
                 if(scope.promptData.launchConf.ask_skip_tags_on_launch) {
+                    // Ensure that the options match the currently selected tags.  These two things
+                    // might get out of sync if the user re-opens the prompts before saving the
+                    // schedule/wf node
+                    scope.promptData.prompts.skipTags.options = _.map(scope.promptData.prompts.skipTags.value, function(tag){
+                        return {
+                            value: tag.value,
+                            name: tag.name,
+                            label: tag.label
+                        };
+                    });
                     CreateSelect2({
                         element: '#job_launch_skip_tags',
                         multiple: true,
@@ -77,6 +95,30 @@ export default
                 scope.$watch('isActiveStep', () => {
                     if(scope.isActiveStep) {
                         codemirrorExtraVars();
+                    }
+                });
+
+                function validate () {
+                    return ToJSON(scope.parseType, scope.extraVariables, true);
+                }
+                scope.validate = validate;
+
+                function focusFirstInput () {
+                  const inputs = el.find('input[type=text], select, textarea:visible, .CodeMirror textarea');
+                  if (inputs.length) {
+                    inputs.get(0).focus();
+                  }
+                }
+
+                angular.element(el).ready(() => {
+                    focusFirstInput();
+                });
+
+                scope.$on('promptTabChange', (event, args) => {
+                    if (args.step === 'other_prompts') {
+                        angular.element(el).ready(() => {
+                          focusFirstInput();
+                        });
                     }
                 });
             };

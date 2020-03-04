@@ -92,7 +92,7 @@ class BaseModel(models.Model):
     class Meta:
         abstract = True
 
-    def __unicode__(self):
+    def __str__(self):
         if 'name' in self.__dict__:
             return u'%s-%s' % (self.name, self.pk)
         else:
@@ -152,7 +152,7 @@ class CreatedModifiedModel(BaseModel):
     )
 
     def save(self, *args, **kwargs):
-        update_fields = kwargs.get('update_fields', [])
+        update_fields = list(kwargs.get('update_fields', []))
         # Manually perform auto_now_add and auto_now logic.
         if not self.pk and not self.created:
             self.created = now()
@@ -221,7 +221,46 @@ class PasswordFieldsModel(BaseModel):
             update_fields.append(field)
 
 
-class PrimordialModel(CreatedModifiedModel):
+class HasEditsMixin(BaseModel):
+    """Mixin which will keep the versions of field values from last edit
+    so we can tell if current model has unsaved changes.
+    """
+
+    class Meta:
+        abstract = True
+
+    @classmethod
+    def _get_editable_fields(cls):
+        fds = set([])
+        for field in cls._meta.concrete_fields:
+            if hasattr(field, 'attname'):
+                if field.attname == 'id':
+                    continue
+                elif field.attname.endswith('ptr_id'):
+                    # polymorphic fields should always be non-editable, see:
+                    # https://github.com/django-polymorphic/django-polymorphic/issues/349
+                    continue
+                if getattr(field, 'editable', True):
+                    fds.add(field.attname)
+        return fds
+
+    def _get_fields_snapshot(self, fields_set=None):
+        new_values = {}
+        if fields_set is None:
+            fields_set = self._get_editable_fields()
+        for attr, val in self.__dict__.items():
+            if attr in fields_set:
+                new_values[attr] = val
+        return new_values
+
+    def _values_have_edits(self, new_values):
+        return any(
+            new_values.get(fd_name, None) != self._prior_values_store.get(fd_name, None)
+            for fd_name in new_values.keys()
+        )
+
+
+class PrimordialModel(HasEditsMixin, CreatedModifiedModel):
     '''
     Common model for all object types that have these standard fields
     must use a subclass CommonModel or CommonModelNameNotUnique though
@@ -254,6 +293,14 @@ class PrimordialModel(CreatedModifiedModel):
 
     tags = TaggableManager(blank=True)
 
+    def __init__(self, *args, **kwargs):
+        r = super(PrimordialModel, self).__init__(*args, **kwargs)
+        if self.pk:
+            self._prior_values_store = self._get_fields_snapshot()
+        else:
+            self._prior_values_store = {}
+        return r
+
     def save(self, *args, **kwargs):
         update_fields = kwargs.get('update_fields', [])
         user = get_current_user()
@@ -263,10 +310,14 @@ class PrimordialModel(CreatedModifiedModel):
             self.created_by = user
             if 'created_by' not in update_fields:
                 update_fields.append('created_by')
-        self.modified_by = user
-        if 'modified_by' not in update_fields:
-            update_fields.append('modified_by')
+        # Update modified_by if any editable fields have changed
+        new_values = self._get_fields_snapshot()
+        if (not self.pk and not self.modified_by) or self._values_have_edits(new_values):
+            self.modified_by = user
+            if 'modified_by' not in update_fields:
+                update_fields.append('modified_by')
         super(PrimordialModel, self).save(*args, **kwargs)
+        self._prior_values_store = new_values
 
     def clean_description(self):
         # Description should always be empty string, never null.
@@ -338,12 +389,11 @@ class NotificationFieldsModel(BaseModel):
         related_name='%(class)s_notification_templates_for_success'
     )
 
-    notification_templates_any = models.ManyToManyField(
+    notification_templates_started = models.ManyToManyField(
         "NotificationTemplate",
         blank=True,
-        related_name='%(class)s_notification_templates_for_any'
+        related_name='%(class)s_notification_templates_for_started'
     )
-
 
 
 def prevent_search(relation):
@@ -360,4 +410,15 @@ def prevent_search(relation):
     should not be searchable/filterable via search query params
     """
     setattr(relation, '__prevent_search__', True)
+    return relation
+
+
+def accepts_json(relation):
+    """
+    Used to mark a model field as allowing JSON e.g,. JobTemplate.extra_vars
+    This is *mostly* used as a way to provide type hints for certain fields
+    so that HTTP OPTIONS reports the type data we need for the CLI to allow
+    JSON/YAML input.
+    """
+    setattr(relation, '__accepts_json__', True)
     return relation

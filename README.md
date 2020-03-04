@@ -1,7 +1,6 @@
-[![Run Status](https://api.shippable.com/projects/591c82a22f895107009e8b35/badge?branch=devel)](https://app.shippable.com/github/ansible/awx)
+[![Gated by Zuul](https://zuul-ci.org/gated.svg)](https://ansible.softwarefactory-project.io/zuul/status)
 
-AWX
-===
+<img src="https://raw.githubusercontent.com/ansible/awx-logos/master/awx/ui/client/assets/logo-login.svg?sanitize=true" width=200 alt="AWX" />
 
 AWX provides a web-based user interface, REST API, and task engine built on top of [Ansible](https://github.com/ansible/ansible). It is the upstream project for [Tower](https://www.ansible.com/tower), a commercial derivative of AWX.  
 
@@ -10,6 +9,8 @@ To install AWX, please view the [Install guide](./INSTALL.md).
 To learn more about using AWX, and Tower, view the [Tower docs site](http://docs.ansible.com/ansible-tower/index.html).
 
 The AWX Project Frequently Asked Questions can be found [here](https://www.ansible.com/awx-project-faq).
+
+The AWX logos and branding assets are covered by [our trademark guidelines](https://github.com/ansible/awx-logos/blob/master/TRADEMARKS.md).
 
 Contributing
 ------------
@@ -23,7 +24,7 @@ Contributing
 Reporting Issues
 ----------------
 
-If you're experiencing a problem, we encourage you to open an issue, and share your feedback. But before opening a new issue, we ask that you please take a look at our [Issues guide](./ISSUES.md).
+If you're experiencing a problem that you feel is a bug in AWX, or have ideas for how to improve AWX, we encourage you to open an issue, and share your feedback. But before opening a new issue, we ask that you please take a look at our [Issues guide](./ISSUES.md).
 
 Code of Conduct
 ---------------
@@ -33,11 +34,10 @@ We ask all of our community members and contributors to adhere to the [Ansible c
 Get Involved
 ------------
 
-We welcome your feedback and ideas. Here's how to reach us:
+We welcome your feedback and ideas. Here's how to reach us with feedback and questions:
 
 - Join the `#ansible-awx` channel on irc.freenode.net
 - Join the [mailing list](https://groups.google.com/forum/#!forum/awx-project) 
-- [Open an Issue](https://github.com/ansible/awx/issues)
 
 License
 -------

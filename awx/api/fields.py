@@ -3,12 +3,14 @@
 
 # Django
 from django.utils.translation import ugettext_lazy as _
+from django.core.exceptions import ObjectDoesNotExist
 
 # Django REST Framework
 from rest_framework import serializers
 
 # AWX
 from awx.conf import fields
+from awx.main.models import Credential
 
 __all__ = ['BooleanNullField', 'CharNullField', 'ChoiceNullField', 'VerbatimField']
 
@@ -78,7 +80,7 @@ class OAuth2ProviderField(fields.DictField):
     default_error_messages = {
         'invalid_key_names': _('Invalid key names: {invalid_key_names}'),
     }
-    valid_key_names = {'ACCESS_TOKEN_EXPIRE_SECONDS', 'AUTHORIZATION_CODE_EXPIRE_SECONDS'}
+    valid_key_names = {'ACCESS_TOKEN_EXPIRE_SECONDS', 'AUTHORIZATION_CODE_EXPIRE_SECONDS', 'REFRESH_TOKEN_EXPIRE_SECONDS'}
     child = fields.IntegerField(min_value=1)
 
     def to_internal_value(self, data):
@@ -87,3 +89,24 @@ class OAuth2ProviderField(fields.DictField):
         if invalid_flags:
             self.fail('invalid_key_names', invalid_key_names=', '.join(list(invalid_flags)))
         return data
+
+
+class DeprecatedCredentialField(serializers.IntegerField):
+
+    def __init__(self, **kwargs):
+        kwargs['allow_null'] = True
+        kwargs['default'] = None
+        kwargs['min_value'] = 1
+        kwargs.setdefault('help_text', 'This resource has been deprecated and will be removed in a future release')
+        super(DeprecatedCredentialField, self).__init__(**kwargs)
+
+    def to_internal_value(self, pk):
+        try:
+            pk = int(pk)
+        except ValueError:
+            self.fail('invalid')
+        try:
+            Credential.objects.get(pk=pk)
+        except ObjectDoesNotExist:
+            raise serializers.ValidationError(_('Credential {} does not exist').format(pk))
+        return pk

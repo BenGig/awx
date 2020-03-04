@@ -1,14 +1,19 @@
 import pytest
 
 from django.core.exceptions import ImproperlyConfigured
+from django.conf import settings
 
 from awx.api.versioning import reverse
 from awx.main.middleware import URLModificationMiddleware
-from awx.main.models import * # noqa
+from awx.main.models import (  # noqa
+    Credential, CustomInventoryScript, Group, Host, Instance, InstanceGroup,
+    Inventory, InventorySource, JobTemplate, NotificationTemplate,
+    Organization, Project, User, WorkflowJobTemplate,
+)
+from awx.conf import settings_registry
 
 
-@pytest.fixture(scope='function', autouse=True)
-def init_url_modification_middleware():
+def setup_module(module):
     # In real-world scenario, named url graph structure is populated by __init__
     # of URLModificationMiddleware. The way Django bootstraps ensures the initialization
     # will happen *once and only once*, while the number of initialization is uncontrollable
@@ -18,6 +23,12 @@ def init_url_modification_middleware():
         URLModificationMiddleware()
     except ImproperlyConfigured:
         pass
+
+
+def teardown_module(module):
+    # settings_registry will be persistent states unless we explicitly clean them up. 
+    settings_registry.unregister('NAMED_URL_FORMATS')
+    settings_registry.unregister('NAMED_URL_GRAPH_NODES')
 
 
 @pytest.mark.django_db

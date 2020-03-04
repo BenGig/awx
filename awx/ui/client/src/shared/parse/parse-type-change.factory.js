@@ -1,6 +1,7 @@
 import 'codemirror/lib/codemirror.js';
 import 'codemirror/mode/javascript/javascript.js';
 import 'codemirror/mode/yaml/yaml.js';
+import 'codemirror/mode/jinja2/jinja2.js';
 import 'codemirror/addon/lint/lint.js';
 import 'angular-codemirror/lib/yaml-lint.js';
 import 'codemirror/addon/edit/closebrackets.js';
@@ -48,7 +49,6 @@ export default
                         scrollbarStyle: null
                     }
                 };
-
                 scope[fld + 'codeMirror'] = AngularCodeMirror(readOnly);
                 scope[fld + 'codeMirror'].addModes(variableEditModes);
                 scope[fld + 'codeMirror'].showTextArea({
@@ -61,7 +61,6 @@ export default
                     onChange: onChange
                 });
             }
-
             // Hide the textarea and show a CodeMirror editor
             createField(onChange, onReady, fld);
 
@@ -96,8 +95,12 @@ export default
                     // convert json to yaml
                     try {
                         removeField(fld);
-                        
-                        json_obj = JSON.parse(scope[fld]);
+                        let jsonString = scope[fld];
+                        if (jsonString.trim() === '') {
+                          jsonString = '{}';
+                        }
+
+                        json_obj = JSON.parse(jsonString);
                         if ($.isEmptyObject(json_obj)) {
                             scope[fld] = '---';
                         }

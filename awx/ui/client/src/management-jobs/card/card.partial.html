@@ -1,7 +1,7 @@
-<div class="tab-pane" id="management-jobs-panel">
+<div id="management-jobs-panel">
 	<aw-limit-panels max-panels="2" panel-container="management-jobs-panel"></aw-limit-panels>
 	<div ui-view></div>
-	<div class="tab-pane Panel" id="management_jobs">
+	<div class="card at-Panel" id="management_jobs">
 		<div class="List-title">
 			<div class="List-titleText" translate>
 				MANAGEMENT JOBS
@@ -18,7 +18,7 @@
 					<h3 class="MgmtCards-label"> {{ card.name }}</h3>
 					<div class="MgmtCards-actionItems">
 						<button class="MgmtCards-actionItem List-actionButton"
-							ng-click='chooseRunJob(card.id, card.name)'
+							ng-click='submitJob(card.id, card.name)'
 							ng-show='current_user.is_superuser'
 							data-placement="top" aw-tool-tip="{{'Launch Management Job'|translate}}" data-original-title="" title="">
 							<i class="MgmtCards-actionItemIcon icon-launch"></i>

@@ -4,88 +4,186 @@
  * All Rights Reserved
  *************************************************/
 
-export default ['$state', '$stateParams', '$scope', 'ParseVariableString',
-    'rbacUiControlService', 'ToJSON', 'ParseTypeChange', 'GroupsService',
+export default ['$state', '$scope', 'ParseVariableString', 'ParseTypeChange',
     'GetChoices', 'GetBasePath', 'CreateSelect2', 'GetSourceTypeOptions',
-    'inventorySourceData', 'SourcesService', 'inventoryData', 'inventorySourcesOptions', 'Empty',
-    'Wait', 'Rest', 'Alert', '$rootScope', 'i18n',
-    function($state, $stateParams, $scope, ParseVariableString,
-        rbacUiControlService, ToJSON,ParseTypeChange, GroupsService,
+    'SourcesService', 'inventoryData', 'inventorySourcesOptions', 'Empty',
+    'Wait', 'Rest', 'Alert', '$rootScope', 'i18n', 'InventoryHostsStrings',
+    'ProcessErrors', 'inventorySource', 'isNotificationAdmin', 'ConfigData',
+    function($state, $scope, ParseVariableString, ParseTypeChange,
         GetChoices, GetBasePath, CreateSelect2, GetSourceTypeOptions,
-        inventorySourceData, SourcesService, inventoryData, inventorySourcesOptions, Empty,
-        Wait, Rest, Alert, $rootScope, i18n) {
+        SourcesService, inventoryData, inventorySourcesOptions, Empty,
+        Wait, Rest, Alert, $rootScope, i18n, InventoryHostsStrings,
+        ProcessErrors, inventorySource, isNotificationAdmin, ConfigData) {
 
-        function init() {
-            $scope.projectBasePath = GetBasePath('projects') + '?not__status=never updated';
-            $scope.canAdd = inventorySourcesOptions.actions.POST;
-            // instantiate expected $scope values from inventorySourceData
-            _.assign($scope,
-                {credential: inventorySourceData.credential},
-                {overwrite: inventorySourceData.overwrite},
-                {overwrite_vars: inventorySourceData.overwrite_vars},
-                {update_on_launch: inventorySourceData.update_on_launch},
-                {update_cache_timeout: inventorySourceData.update_cache_timeout},
-                {instance_filters: inventorySourceData.instance_filters},
-                {inventory_script: inventorySourceData.source_script},
-                {verbosity: inventorySourceData.verbosity});
+        const inventorySourceData = inventorySource.get();
 
-            $scope.inventory_source_obj = inventorySourceData;
-            if (inventorySourceData.credential) {
-                $scope.credential_name = inventorySourceData.summary_fields.credential.name;
+        // To toggle notifications a user needs to have a read role on the inventory
+        // _and_ have at least a notification template admin role on an org.
+        // If the user has gotten this far it's safe to say they have
+        // at least read access to the inventory
+        $scope.sufficientRoleForNotifToggle = isNotificationAdmin;
+        $scope.sufficientRoleForNotif =  isNotificationAdmin || $scope.user_is_system_auditor;
+        $scope.projectBasePath = GetBasePath('projects') + '?not__status=never updated';
+        $scope.canAdd = inventorySourcesOptions.actions.POST;
+        const virtualEnvs = ConfigData.custom_virtualenvs || [];
+        $scope.custom_virtualenvs_options = virtualEnvs;
+        // instantiate expected $scope values from inventorySourceData
+        _.assign($scope,
+            {credential: inventorySourceData.credential},
+            {overwrite: inventorySourceData.overwrite},
+            {overwrite_vars: inventorySourceData.overwrite_vars},
+            {update_on_launch: inventorySourceData.update_on_launch},
+            {update_cache_timeout: inventorySourceData.update_cache_timeout},
+            {instance_filters: inventorySourceData.instance_filters},
+            {inventory_script: inventorySourceData.source_script},
+            {verbosity: inventorySourceData.verbosity});
+
+        $scope.inventory_source_obj = inventorySourceData;
+        $scope.breadcrumb.inventory_source_name = inventorySourceData.name;
+        if (inventorySourceData.credential) {
+            $scope.credential_name = inventorySourceData.summary_fields.credential.name;
+        }
+
+        if(inventorySourceData.source === 'scm') {
+            $scope.project = inventorySourceData.source_project;
+            $scope.project_name = inventorySourceData.summary_fields.source_project.name;
+            updateSCMProject();
+        }
+
+        // display custom inventory_script name
+        if (inventorySourceData.source === 'custom' && inventorySourceData.summary_fields.source_script) {
+            $scope.inventory_script_name = inventorySourceData.summary_fields.source_script.name;
+        }
+        $scope = angular.extend($scope, inventorySourceData);
+
+        $scope.$watch('summary_fields.user_capabilities.edit', function(val) {
+            $scope.canAdd = val;
+        });
+
+        $scope.$on('sourceTypeOptionsReady', function() {
+            $scope.source = _.find($scope.source_type_options, { value: inventorySourceData.source });
+            var source = $scope.source && $scope.source.value ? $scope.source.value : null;
+            $scope.cloudCredentialRequired = source !== '' && source !== 'scm' && source !== 'custom' && source !== 'ec2' ? true : false;
+            CreateSelect2({
+                element: '#inventory_source_source',
+                multiple: false
+            });
+
+            if (source === 'ec2' || source === 'custom' ||
+                source === 'vmware' || source === 'openstack' ||
+                source === 'scm' || source === 'cloudforms'  ||
+                source === 'satellite6' || source === 'azure_rm') {
+
+                var varName;
+                if (source === 'scm') {
+                    varName = 'custom_variables';
+                } else {
+                    varName = source + '_variables';
+                }
+
+                $scope[varName] = ParseVariableString(inventorySourceData
+                    .source_vars);
+
+                ParseTypeChange({
+                    scope: $scope,
+                    field_id: varName,
+                    variable: varName,
+                    parse_variable: 'envParseType',
+                    readOnly: !$scope.summary_fields.user_capabilities.edit
+                });
             }
+        });
 
-            if(inventorySourceData.source === 'scm') {
-                $scope.project = inventorySourceData.source_project;
-                $scope.project_name = inventorySourceData.summary_fields.source_project.name;
+        $scope.envParseType = 'yaml';
+
+        GetSourceTypeOptions({
+            scope: $scope,
+            variable: 'source_type_options'
+        });
+        GetChoices({
+            scope: $scope,
+            field: 'source_regions',
+            variable: 'rax_regions',
+            choice_name: 'rax_region_choices',
+            options: inventorySourcesOptions
+        });
+        GetChoices({
+            scope: $scope,
+            field: 'source_regions',
+            variable: 'ec2_regions',
+            choice_name: 'ec2_region_choices',
+            options: inventorySourcesOptions
+        });
+        GetChoices({
+            scope: $scope,
+            field: 'source_regions',
+            variable: 'gce_regions',
+            choice_name: 'gce_region_choices',
+            options: inventorySourcesOptions
+        });
+        GetChoices({
+            scope: $scope,
+            field: 'source_regions',
+            variable: 'azure_regions',
+            choice_name: 'azure_rm_region_choices',
+            options: inventorySourcesOptions
+        });
+        GetChoices({
+            scope: $scope,
+            field: 'group_by',
+            variable: 'ec2_group_by',
+            choice_name: 'ec2_group_by_choices',
+            options: inventorySourcesOptions
+        });
+
+        var source = $scope.source === 'azure_rm' ? 'azure' : $scope.source;
+        var regions = inventorySourceData.source_regions.split(',');
+        // azure_rm regions choices are keyed as "azure" in an OPTIONS request to the inventory_sources endpoint
+        $scope.source_region_choices = $scope[source + '_regions'];
+
+        // the API stores azure regions as all-lowercase strings - but the azure regions received from OPTIONS are Snake_Cased
+        if (source === 'azure') {
+            $scope.source_regions = _.map(regions, (region) => _.find($scope[source + '_regions'], (o) => o.value.toLowerCase() === region));
+        }
+        // all other regions are 1-1
+        else {
+            $scope.source_regions = _.map(regions, (region) => _.find($scope[source + '_regions'], (o) => o.value === region));
+        }
+        initRegionSelect();
+
+        GetChoices({
+            scope: $scope,
+            field: 'verbosity',
+            variable: 'verbosity_options',
+            options: inventorySourcesOptions
+        });
+
+        var i;
+        for (i = 0; i < $scope.verbosity_options.length; i++) {
+            if ($scope.verbosity_options[i].value === $scope.verbosity) {
+                $scope.verbosity = $scope.verbosity_options[i];
+            }
+        }
+
+        CreateSelect2({
+            element: '#inventory_source_custom_virtualenv',
+            multiple: false,
+            opts: $scope.custom_virtualenvs_options
+        });
+
+        initVerbositySelect();
+
+        $scope.$watch('verbosity', initVerbositySelect);
+
+        // Register a watcher on project_name
+        if ($scope.getInventoryFilesUnregister) {
+            $scope.getInventoryFilesUnregister();
+        }
+        $scope.getInventoryFilesUnregister = $scope.$watch('project', function (newValue, oldValue) {
+            if (newValue !== oldValue) {
                 updateSCMProject();
             }
-
-            // display custom inventory_script name
-            if (inventorySourceData.source === 'custom' && inventorySourceData.summary_fields.source_script) {
-                $scope.inventory_script_name = inventorySourceData.summary_fields.source_script.name;
-            }
-            $scope = angular.extend($scope, inventorySourceData);
-
-            $scope.$watch('summary_fields.user_capabilities.edit', function(val) {
-                $scope.canAdd = val;
-            });
-
-            $scope.$on('sourceTypeOptionsReady', function() {
-                initSourceSelect();
-            });
-
-            $scope.envParseType = 'yaml';
-
-            initSources();
-
-            GetChoices({
-                scope: $scope,
-                field: 'verbosity',
-                variable: 'verbosity_options',
-                options: inventorySourcesOptions
-            });
-
-            var i;
-            for (i = 0; i < $scope.verbosity_options.length; i++) {
-                if ($scope.verbosity_options[i].value === $scope.verbosity) {
-                    $scope.verbosity = $scope.verbosity_options[i];
-                }
-            }
-
-            initVerbositySelect();
-
-            $scope.$watch('verbosity', initVerbositySelect);
-
-            // Register a watcher on project_name
-            if ($scope.getInventoryFilesUnregister) {
-                $scope.getInventoryFilesUnregister();
-            }
-            $scope.getInventoryFilesUnregister = $scope.$watch('project', function (newValue, oldValue) {
-                if (newValue !== oldValue) {
-                    updateSCMProject();
-                }
-            });
-        }
+        });
 
         function initVerbositySelect(){
             CreateSelect2({
@@ -138,110 +236,12 @@ export default ['$state', '$stateParams', '$scope', 'ParseVariableString',
             }
         }
 
-        function initSourceSelect() {
-            $scope.source = _.find($scope.source_type_options, { value: inventorySourceData.source });
-            var source = $scope.source && $scope.source.value ? $scope.source.value : null;
-            $scope.cloudCredentialRequired = source !== '' && source !== 'scm' && source !== 'custom' && source !== 'ec2' ? true : false;
-            CreateSelect2({
-                element: '#inventory_source_source',
-                multiple: false
-            });
-
-            if (source === 'ec2' || source === 'custom' ||
-                source === 'vmware' || source === 'openstack' ||
-                source === 'scm' || source === 'cloudforms'  ||
-                source === 'satellite6') {
-
-                var varName;
-                if (source === 'scm') {
-                    varName = 'custom_variables';
-                } else {
-                    varName = source + '_variables';
-                }
-
-                $scope[varName] = ParseVariableString(inventorySourceData
-                    .source_vars);
-
-                ParseTypeChange({
-                    scope: $scope,
-                    field_id: varName,
-                    variable: varName,
-                    parse_variable: 'envParseType',
-                });
-            }
-        }
-
-        function initRegionData() {
-            var source = $scope.source === 'azure_rm' ? 'azure' : $scope.source;
-            var regions = inventorySourceData.source_regions.split(',');
-            // azure_rm regions choices are keyed as "azure" in an OPTIONS request to the inventory_sources endpoint
-            $scope.source_region_choices = $scope[source + '_regions'];
-
-            // the API stores azure regions as all-lowercase strings - but the azure regions received from OPTIONS are Snake_Cased
-            if (source === 'azure') {
-                $scope.source_regions = _.map(regions, (region) => _.find($scope[source + '_regions'], (o) => o.value.toLowerCase() === region));
-            }
-            // all other regions are 1-1
-            else {
-                $scope.source_regions = _.map(regions, (region) => _.find($scope[source + '_regions'], (o) => o.value === region));
-            }
-            initRegionSelect();
-        }
-
-        function initSources() {
-            GetSourceTypeOptions({
-                scope: $scope,
-                variable: 'source_type_options'
-            });
-            GetChoices({
-                scope: $scope,
-                field: 'source_regions',
-                variable: 'rax_regions',
-                choice_name: 'rax_region_choices',
-                options: inventorySourcesOptions
-            });
-            GetChoices({
-                scope: $scope,
-                field: 'source_regions',
-                variable: 'ec2_regions',
-                choice_name: 'ec2_region_choices',
-                options: inventorySourcesOptions
-            });
-            GetChoices({
-                scope: $scope,
-                field: 'source_regions',
-                variable: 'gce_regions',
-                choice_name: 'gce_region_choices',
-                options: inventorySourcesOptions
-            });
-            GetChoices({
-                scope: $scope,
-                field: 'source_regions',
-                variable: 'azure_regions',
-                choice_name: 'azure_rm_region_choices',
-                options: inventorySourcesOptions
-            });
-            GetChoices({
-                scope: $scope,
-                field: 'group_by',
-                variable: 'ec2_group_by',
-                choice_name: 'ec2_group_by_choices',
-                options: inventorySourcesOptions
-            });
-
-            initRegionData();
-        }
-
         function initRegionSelect() {
             CreateSelect2({
                 element: '#inventory_source_source_regions',
                 multiple: true
             });
 
-            initGroupBySelect();
-        }
-
-        function initGroupBySelect(){
             let add_new = false;
             if( _.get($scope, 'source') === 'ec2' || _.get($scope.source, 'value') === 'ec2') {
                 $scope.group_by_choices = $scope.ec2_group_by;
@@ -303,25 +303,36 @@ export default ['$state', '$stateParams', '$scope', 'ParseVariableString',
         };
 
         $scope.lookupCredential = function(){
-            if($scope.source.value !== "scm" && $scope.source.value !== "custom") {
-                let kind = ($scope.source.value === "ec2") ? "aws" : $scope.source.value;
-                $state.go('.credential', {
-                    credential_search: {
-                        kind: kind,
-                        page_size: '5',
-                        page: '1'
-                    }
-                });
+            // For most source type selections, we filter for 1-1 matches to credential_type namespace.
+            let searchKey = 'credential_type__namespace';
+            let searchValue = $scope.source.value;
+
+            // SCM and custom source types are more generic in terms of the credentials they
+            // accept - any cloud or user-defined credential type can be used. We filter for
+            // these using the credential_type kind field, which categorizes all cloud and
+            // user-defined credentials as 'cloud'.
+            if ($scope.source.value === 'scm') {
+                searchKey = 'credential_type__kind';
+                searchValue = 'cloud';
             }
-            else {
-                $state.go('.credential', {
-                    credential_search: {
-                        credential_type__kind: "cloud",
-                        page_size: '5',
-                        page: '1'
-                    }
-                });
+
+            if ($scope.source.value === 'custom') {
+                searchKey = 'credential_type__kind';
+                searchValue = 'cloud';
             }
+
+            // When the selection is 'ec2' we actually want to filter for the 'aws' namespace.
+            if ($scope.source.value === 'ec2') {
+                searchValue = 'aws';
+            }
+
+            $state.go('.credential', {
+                credential_search: {
+                    [searchKey]: searchValue,
+                    page_size: '5',
+                    page: '1'
+                }
+            });
         };
 
         $scope.formCancel = function() {
@@ -343,6 +354,7 @@ export default ['$state', '$stateParams', '$scope', 'ParseVariableString',
                 update_on_launch: $scope.update_on_launch,
                 update_cache_timeout: $scope.update_cache_timeout || 0,
                 verbosity: $scope.verbosity.value,
+                custom_virtualenv: $scope.custom_virtualenv || null,
                 // comma-delimited strings
                 group_by: SourcesService.encodeGroupBy($scope.source, $scope.group_by),
                 source_regions: _.map($scope.source_regions, 'value').join(',')
@@ -366,9 +378,16 @@ export default ['$state', '$stateParams', '$scope', 'ParseVariableString',
                 params.source = null;
             }
 
-            SourcesService
-              .put(params)
-              .then(() => $state.go('.', null, { reload: true }));
+            inventorySource.request('put', {
+                data: params
+            }).then(() => {
+                $state.go('.', null, { reload: true });
+            }).catch(({ data, status, config }) => {
+                ProcessErrors($scope, data, status, null, {
+                    hdr: 'Error!',
+                    msg: InventoryHostsStrings.get('error.CALL', { path: `${config.url}`, status })
+                });
+            });
         };
 
         $scope.sourceChange = function(source) {
@@ -377,7 +396,7 @@ export default ['$state', '$stateParams', '$scope', 'ParseVariableString',
                 $scope.credentialBasePath = GetBasePath('credentials') + '?credential_type__kind__in=cloud,network';
             }
             else{
-                $scope.credentialBasePath = (source === 'ec2') ? GetBasePath('credentials') + '?kind=aws' : GetBasePath('credentials') + (source === '' ? '' : '?kind=' + (source));
+                $scope.credentialBasePath = (source === 'ec2') ? GetBasePath('credentials') + '?credential_type__namespace=aws' : GetBasePath('credentials') + (source === '' ? '' : 'credential_type__namespace=' + (source));
             }
             if (source === 'ec2' || source === 'custom' || source === 'vmware' || source === 'openstack' || source === 'scm' || source === 'cloudforms' || source === "satellite6") {
                 $scope.envParseType = 'yaml';
@@ -398,13 +417,6 @@ export default ['$state', '$stateParams', '$scope', 'ParseVariableString',
                 });
             }
 
-            if (source === 'scm') {
-              $scope.overwrite_vars = true;
-              $scope.inventory_source_form.inventory_file.$setPristine();
-            } else {
-              $scope.overwrite_vars = false;
-            }
-
             // reset fields
             $scope.group_by_choices = source === 'ec2' ? $scope.ec2_group_by : null;
             // azure_rm regions choices are keyed as "azure" in an OPTIONS request to the inventory_sources endpoint
@@ -415,11 +427,10 @@ export default ['$state', '$stateParams', '$scope', 'ParseVariableString',
             $scope.credential_name = null;
             $scope.group_by = null;
             $scope.group_by_choices = [];
+            $scope.overwrite_vars = false;
 
             initRegionSelect();
 
         };
-
-        init();
     }
 ];

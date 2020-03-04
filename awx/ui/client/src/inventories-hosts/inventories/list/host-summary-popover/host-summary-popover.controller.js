@@ -1,13 +1,17 @@
-export default [ '$scope', 'Empty', 'Wait', 'GetBasePath', 'Rest', 'ProcessErrors', '$state',
-    function($scope, Empty, Wait, GetBasePath, Rest, ProcessErrors, $state) {
+export default [ '$scope', 'Empty', 'Wait', 'GetBasePath', 'Rest', 'ProcessErrors',
+    function($scope, Empty, Wait, GetBasePath, Rest, ProcessErrors) {
 
         $scope.gatherRecentJobs = function(event) {
             if (!Empty($scope.inventory.id)) {
                 if ($scope.inventory.total_hosts > 0) {
                     Wait('start');
-                    let url = GetBasePath('jobs') + "?type=job&inventory=" + $scope.inventory.id + "&failed=";
-                    url += ($scope.inventory.has_active_failures) ? "true" : "false";
+
+                    let url = GetBasePath('unified_jobs') + '?';
+                    url += `&or__job__inventory=${$scope.inventory.id}`;
+                    url += `&or__workflowjob__inventory=${$scope.inventory.id}`;
+                    url += `&failed=${$scope.inventory.has_active_failures ? "true" : "false"}`;
                     url += "&order_by=-finished&page_size=5";
+
                     Rest.setUrl(url);
                     Rest.get()
                         .then(({data}) => {
@@ -21,10 +25,5 @@ export default [ '$scope', 'Empty', 'Wait', 'GetBasePath', 'Rest', 'ProcessError
                 }
             }
         };
-
-        $scope.viewJob = function(jobId) {
-            $state.go('jobResult', {id: jobId});
-        };
-
     }
 ];

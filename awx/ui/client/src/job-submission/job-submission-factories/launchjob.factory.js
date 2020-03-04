@@ -128,9 +128,14 @@ export default
                             job_launch_data.extra_credentials.push(extraCredential.id);
                         });
                     }
+
                     if(scope.ask_diff_mode_on_launch && _.has(scope, 'other_prompt_data.diff_mode')){
                         job_launch_data.diff_mode = scope.other_prompt_data.diff_mode;
                     }
+
+                    if(scope.ask_scm_branch_on_launch && _.has(scope, 'other_prompt_data.scm_branch')){
+                        job_launch_data.scm_branch = scope.other_prompt_data.scm_branch;
+                    }         
 
                     if(!Empty(scope.relaunchHostType)) {
                         job_launch_data.hosts = scope.relaunchHostType;
@@ -149,8 +154,8 @@ export default
                         if(base !== 'portal' && Empty(data.system_job) || (base === 'home')){
                             // use $state.go with reload: true option to re-instantiate sockets in
 
-                            var goTojobResults = function(state) {
-                                $state.go(state, {id: job}, {reload:true});
+                            var goTojobResults = function(type) {
+                                $state.go('output', {id: job, type}, {reload:true});
                             };
 
                             if($state.includes('jobs')) {
@@ -159,23 +164,23 @@ export default
 
                             else {
                                 if(_.has(data, 'job')) {
-                                    goTojobResults('jobResult');
+                                    goTojobResults('playbook');
                                 } else if(data.type && data.type === 'workflow_job') {
                                     job = data.id;
-                                    goTojobResults('workflowResults');
+                                    goTojobResults('workflow_job');
                                 }
                                 else if(_.has(data, 'ad_hoc_command')) {
-                                    goTojobResults('adHocJobStdout');
+                                    goTojobResults('ad_hoc_command');
                                 }
                                 else if(_.has(data, 'system_job')) {
-                                    goTojobResults('managementJobStdout');
+                                    goTojobResults('system_job');
                                 }
                                 else if(_.has(data, 'project_update')) {
                                     // If we are on the projects list or any child state of that list
                                     // then we want to stay on that page.  Otherwise go to the stdout
                                     // view.
                                     if(!$state.includes('projects')) {
-                                        goTojobResults('scmUpdateStdout');
+                                        goTojobResults('project_update');
                                     }
                                 }
                                 else if(_.has(data, 'inventory_update')) {
@@ -183,7 +188,7 @@ export default
                                     // page then we want to stay on that page.  Otherwise go to the stdout
                                     // view.
                                     if(!$state.includes('inventories.edit')) {
-                                        goTojobResults('inventorySyncStdout');
+                                        goTojobResults('playbook');
                                     }
                                 }
                             }

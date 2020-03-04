@@ -16,9 +16,9 @@
 
 export default
     ['$http', '$rootScope', '$cookies', 'GetBasePath', 'Store', '$q',
-    '$injector',
+    '$injector', '$location',
     function ($http, $rootScope, $cookies, GetBasePath, Store, $q,
-    $injector) {
+    $injector, $location) {
         return {
             setToken: function (token, expires) {
                 $cookies.remove('token_expires');
@@ -29,6 +29,7 @@ export default
                 $cookies.put('sessionExpired', false);
 
                 $rootScope.userLoggedIn = true;
+                $rootScope.userLoggedOut = false;
                 $rootScope.token_expires = expires;
                 $rootScope.sessionExpired = false;
             },
@@ -42,21 +43,13 @@ export default
                 return $rootScope.userLoggedIn;
             },
             retrieveToken: function (username, password) {
-                var getCSRFToken = $http({
-                    method: 'GET',
-                    url: `/api/login/`
-                });
-
-                return getCSRFToken.then(function({data}) {
-                    var csrfmiddlewaretoken = /name='csrfmiddlewaretoken' value='([0-9a-zA-Z]+)' \//.exec(data)[1];
-                    return $http({
-                        method: 'POST',
-                        url: `/api/login/`,
-                        data: `username=${encodeURIComponent(username)}&password=${encodeURIComponent(password)}&csrfmiddlewaretoken=${csrfmiddlewaretoken}&next=%2fapi%2f`,
-                        headers: {
-                            'Content-Type': 'application/x-www-form-urlencoded'
-                        }
-                    });
+                return $http({
+                    method: 'POST',
+                    url: `/api/login/`,
+                    data: `username=${encodeURIComponent(username)}&password=${encodeURIComponent(password)}&next=%2fapi%2f`,
+                    headers: {
+                        'Content-Type': 'application/x-www-form-urlencoded'
+                    }
                 });
             },
             deleteToken: function () {
@@ -118,6 +111,8 @@ export default
                     $rootScope.token_expires = null;
                     $rootScope.login_username = null;
                     $rootScope.login_password = null;
+                    $rootScope.userLoggedOut = true;
+                    $rootScope.pendingApprovalCount = 0;
                     if ($rootScope.sessionTimer) {
                         $rootScope.sessionTimer.clearTimers();
                     }
@@ -155,7 +150,11 @@ export default
             setUserInfo: function (response) {
                 // store the response values in $rootScope so we can get to them later
                 $rootScope.current_user = response.results[0];
-                $cookies.putObject('current_user', response.results[0]); //keep in session cookie in the event of browser refresh
+                if ($location.protocol() === 'https') {
+                  $cookies.putObject('current_user', response.results[0], {secure: true}); //keep in session cookie in the event of browser refresh
+                } else {
+                $cookies.putObject('current_user', response.results[0], {secure: false});
+              }
             },
 
             restoreUserInfo: function () {

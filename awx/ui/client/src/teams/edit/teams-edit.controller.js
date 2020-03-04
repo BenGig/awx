@@ -5,53 +5,37 @@
  *************************************************/
 
 export default ['$scope', '$rootScope', '$stateParams', 'TeamForm', 'Rest',
-    'ProcessErrors', 'GetBasePath', 'Wait', '$state', 'OrgAdminLookup',
+    'ProcessErrors', 'GetBasePath', 'Wait', '$state', 'OrgAdminLookup', 'resolvedModels', 'resourceData',
     function($scope, $rootScope, $stateParams, TeamForm, Rest, ProcessErrors,
-    GetBasePath, Wait, $state, OrgAdminLookup) {
+    GetBasePath, Wait, $state, OrgAdminLookup, models, Dataset) {
 
-        var form = TeamForm,
-            id = $stateParams.team_id,
-            defaultUrl = GetBasePath('teams') + id;
+        const { me } = models;
+        const { data } = Dataset;
+        const id = $stateParams.team_id;
+        const defaultUrl = GetBasePath('teams') + id;
+        let form = TeamForm;
 
         init();
 
         function init() {
+            $scope.canEdit = me.get('summary_fields.user_capabilities.edit');
+            $scope.isOrgAdmin = me.get('related.admin_of_organizations.count') > 0;
             $scope.team_id = id;
-            Rest.setUrl(defaultUrl);
-            Wait('start');
-            Rest.get(defaultUrl).then(({data}) => {
-                setScopeFields(data);
-                $scope.organization_name = data.summary_fields.organization.name;
+            _.forEach(form.fields, (value, key) => {
+                $scope[key] = data[key];
+            });
+            $scope.organization_name = data.summary_fields.organization.name;
 
-                OrgAdminLookup.checkForAdminAccess({organization: data.organization})
+            OrgAdminLookup.checkForAdminAccess({organization: data.organization})
                 .then(function(canEditOrg){
                     $scope.canEditOrg = canEditOrg;
                 });
 
-                $scope.team_obj = data;
-                Wait('stop');
-            });
+            $scope.team_obj = data;
 
             $scope.$watch('team_obj.summary_fields.user_capabilities.edit', function(val) {
-                if (val === false) {
-                    $scope.canAdd = false;
-                }
+                $scope.canAdd = (val === false) ? false : true;
             });
-
-
-        }
-
-        // @issue I think all this really want to do is _.forEach(form.fields, (field) =>{ $scope[field] = data[field]})
-        function setScopeFields(data) {
-            _(data)
-                .pick(function(value, key) {
-                    return form.fields.hasOwnProperty(key) === true;
-                })
-                .forEach(function(value, key) {
-                    $scope[key] = value;
-                })
-                .value();
-            return;
         }
 
         // prepares a data payload for a PUT request to the API

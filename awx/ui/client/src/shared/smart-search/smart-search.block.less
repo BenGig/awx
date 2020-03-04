@@ -2,6 +2,7 @@
 .SmartSearch {
     padding-left: 15px;
     padding-right: 15px;
+    display: block;
 }
 
 .SmartSearch-form {
@@ -76,8 +77,13 @@
     z-index: 1;
 }
 
-.SmartSearch-searchButton:hover {
+.SmartSearch-searchButton:not(.SmartSearch-searchButton--disabled):hover {
     background-color: @default-tertiary-bg;
+}
+
+.SmartSearch-searchButton--disabled {
+    cursor: not-allowed;
+    opacity: 0.65;
 }
 
 .SmartSearch-flexContainer {
@@ -153,6 +159,9 @@
 
 .SmartSearch-deleteContainer:hover > .SmartSearch-tagDelete {
     color: @default-bg;
+}
+.SmartSearch-clearAll-container{
+  .at-mixin-VerticallyCenter();
 }
 .SmartSearch-clearAll{
     font-size: 10px;

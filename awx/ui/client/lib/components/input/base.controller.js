@@ -14,13 +14,13 @@ function BaseInputController (strings) {
         scope.state._required = scope.state.required || false;
         scope.state._isValid = scope.state._isValid || false;
         scope.state._disabled = scope.state._disabled || false;
-        scope.state._activeModel = '_value';
+        scope.state._activeModel = scope.state._activeModel || '_value';
 
         if (scope.state.ask_at_runtime) {
             scope.state._displayPromptOnLaunch = true;
         }
 
-        if (scope.state._value) {
+        if (typeof scope.state._value !== 'undefined') {
             scope.state._edit = true;
             scope.state._preEditValue = scope.state._value;
 
@@ -37,19 +37,30 @@ function BaseInputController (strings) {
                 scope.state._isBeingReplaced = false;
                 scope.state._activeModel = '_displayValue';
             }
+        } else if (typeof scope.state.default !== 'undefined') {
+            scope.state._value = scope.state.default;
         }
 
         form.register(type, scope);
+
+        if (scope.form && scope.form.disabled) {
+            scope.state._enableToggle = false;
+        }
 
         vm.validate = () => {
             let isValid = true;
             let message = '';
 
+            if (scope.state.asTag) {
+                return (isValid, message);
+            }
+
             if (scope.state._value || scope.state._displayValue) {
                 scope.state._touched = true;
             }
 
-            if (scope.state._required && !scope.state._value && !scope.state._displayValue) {
+            if (scope.state._required && (!scope.state._value || !scope.state._value[0]) &&
+                !scope.state._displayValue) {
                 isValid = false;
                 message = vm.strings.get('message.REQUIRED_INPUT_MISSING');
             } else if (scope.state._validate) {
@@ -93,6 +104,7 @@ function BaseInputController (strings) {
                 scope.state._value = scope.state._preEditValue;
                 scope.state._activeModel = '_displayValue';
                 scope.state._placeholder = vm.strings.get('ENCRYPTED');
+                vm.check();
             } else {
                 scope.state._buttonText = vm.strings.get('REVERT');
                 scope.state._disabled = false;
@@ -100,6 +112,10 @@ function BaseInputController (strings) {
                 scope.state._activeModel = '_value';
                 scope.state._value = '';
                 scope.state._placeholder = '';
+                vm.check();
+            }
+            if (scope.form && scope.form.disabled) {
+                scope.state._enableToggle = false;
             }
         };
 

@@ -1,8 +1,14 @@
+# Ignore generated schema
+swagger.json
+schema.json
+reference-schema.json
+
 # Tags
 .tags
 .tags1
 
 # Tower
+awx-dev
 awx/settings/local_*.py*
 awx/*.sqlite3
 awx/*.sqlite3_*
@@ -22,7 +28,12 @@ awx/ui/build_test
 awx/ui/client/languages
 awx/ui/templates/ui/index.html
 awx/ui/templates/ui/installing.html
+awx/ui_next/node_modules/
+awx/ui_next/coverage/
+awx/ui_next/build/locales/_build
+/tower-license
 /tower-license/**
+tools/prometheus/data
 
 # Tower setup playbook testing
 setup/test/roles/postgresql
@@ -51,10 +62,12 @@ __pycache__
 **/node_modules/**
 /tmp
 **/npm-debug.log*
+**/package-lock.json
 
 # UI build flag files
 awx/ui/.deps_built
 awx/ui/.release_built
+awx/ui/.release_deps_built
 
 # Testing
 .cache
@@ -66,6 +79,7 @@ pep8.txt
 scratch
 testem.log
 awx/awx_test.sqlite3-journal
+.pytest_cache/
 
 # Mac OS X
 *.DS_Store
@@ -110,8 +124,8 @@ local/
 *.mo
 requirements/vendor
 .i18n_built
-VERSION
 .idea/*
+*credentials*.y*ml*
 
 # AWX python libs populated by requirements.txt
 awx/lib/.deps_built
@@ -119,4 +133,13 @@ awx/lib/site-packages
 venv/*
 use_dev_supervisor.txt
 
+
+# Ansible module tests
+/awx_collection_test_venv/
+/awx_collection/*.tar.gz
+/awx_collection/galaxy.yml
+/sanity/
+
 .idea/*
+*.unison.tmp
+*.#

@@ -41,11 +41,13 @@ def get_system_id(filname):
             pass
         finally:
             f.close()
+            if system_id:
+                system_id = system_id.strip()
             return system_id
 
 
 def main():
-    module = AnsibleModule(
+    module = AnsibleModule(  # noqa
         argument_spec = dict()
     )
 

@@ -1,7 +1,7 @@
-import mock
+# -*- coding: utf-8 -*-
 import pytest
-import requests
 from copy import deepcopy
+from unittest import mock
 
 from collections import namedtuple
 
@@ -9,24 +9,22 @@ from awx.api.views import (
     ApiVersionRootView,
     JobTemplateLabelList,
     InventoryInventorySourcesUpdate,
-    HostInsights,
     JobTemplateSurveySpec
 )
 
-from awx.main.models import (
-    Host,
-)
+from awx.main.views import handle_error
+
+from rest_framework.test import APIRequestFactory
 
 
-@pytest.fixture
-def mock_response_new(mocker):
-    m = mocker.patch('awx.api.views.Response.__new__')
-    m.return_value = m
-    return m
+def test_handle_error():
+    # Assure that templating of error does not raise errors
+    request = APIRequestFactory().get('/fooooo/')
+    handle_error(request)
 
 
 class TestApiRootView:
-    def test_get_endpoints(self, mocker, mock_response_new):
+    def test_get_endpoints(self, mocker):
         endpoints = [
             'ping',
             'config',
@@ -60,11 +58,9 @@ class TestApiRootView:
         ]
         view = ApiVersionRootView()
         ret = view.get(mocker.MagicMock())
-
-        assert ret == mock_response_new
-        data_arg = mock_response_new.mock_calls[0][1][1]
+        assert ret.status_code == 200
         for endpoint in endpoints:
-            assert endpoint in data_arg
+            assert endpoint in ret.data
 
 
 class TestJobTemplateLabelList:
@@ -111,102 +107,13 @@ class TestInventoryInventorySourcesUpdate:
 
         with mocker.patch.object(InventoryInventorySourcesUpdate, 'get_object', return_value=obj):
             with mocker.patch.object(InventoryInventorySourcesUpdate, 'get_serializer_context', return_value=None):
-                with mocker.patch('awx.api.views.InventoryUpdateSerializer') as serializer_class:
+                with mocker.patch('awx.api.serializers.InventoryUpdateDetailSerializer') as serializer_class:
                     serializer = serializer_class.return_value
                     serializer.to_representation.return_value = {}
 
                     view = InventoryInventorySourcesUpdate()
                     response = view.post(mock_request)
                     assert response.data == expected
-
-
-class TestHostInsights():
-
-    @pytest.fixture
-    def patch_parent(self, mocker):
-        mocker.patch('awx.api.generics.GenericAPIView')
-
-    @pytest.mark.parametrize("status_code, exception, error, message", [
-        (502, requests.exceptions.SSLError, 'SSLError while trying to connect to https://myexample.com/whocares/me/', None,),
-        (504, requests.exceptions.Timeout, 'Request to https://myexample.com/whocares/me/ timed out.', None,),
-        (502, requests.exceptions.RequestException, 'booo!', 'Unknown exception booo! while trying to GET https://myexample.com/whocares/me/'),
-    ])
-    def test_get_insights_request_exception(self, patch_parent, mocker, status_code, exception, error, message):
-        view = HostInsights()
-        mocker.patch.object(view, '_get_insights', side_effect=exception(error))
-
-        (msg, code) = view.get_insights('https://myexample.com/whocares/me/', 'ignore', 'ignore')
-        assert code == status_code
-        assert msg['error'] == message or error
-
-    def test_get_insights_non_200(self, patch_parent, mocker):
-        view = HostInsights()
-        Response = namedtuple('Response', 'status_code content')
-        mocker.patch.object(view, '_get_insights', return_value=Response(500, 'mock 500 err msg'))
-
-        (msg, code) = view.get_insights('https://myexample.com/whocares/me/', 'ignore', 'ignore')
-        assert msg['error'] == (
-            'Failed to gather reports and maintenance plans from Insights API at URL'
-            ' https://myexample.com/whocares/me/. Server responded with 500 status code '
-            'and message mock 500 err msg')
-
-    def test_get_insights_401(self, patch_parent, mocker):
-        view = HostInsights()
-        Response = namedtuple('Response', 'status_code content')
-        mocker.patch.object(view, '_get_insights', return_value=Response(401, ''))
-
-        (msg, code) = view.get_insights('https://myexample.com/whocares/me/', 'ignore', 'ignore')
-        assert msg['error'] == 'Unauthorized access. Please check your Insights Credential username and password.'
-
-    def test_get_insights_malformed_json_content(self, patch_parent, mocker):
-        view = HostInsights()
-
-        class Response():
-            status_code = 200
-            content = 'booo!'
-
-            def json(self):
-                raise ValueError('we do not care what this is')
-
-        mocker.patch.object(view, '_get_insights', return_value=Response())
-
-        (msg, code) = view.get_insights('https://myexample.com/whocares/me/', 'ignore', 'ignore')
-        assert msg['error'] == 'Expected JSON response from Insights but instead got booo!'
-        assert code == 502
-
-    #def test_get_not_insights_host(self, patch_parent, mocker, mock_response_new):
-    #def test_get_not_insights_host(self, patch_parent, mocker):
-    def test_get_not_insights_host(self, mocker):
-
-        view = HostInsights()
-
-        host = Host()
-        host.insights_system_id = None
-
-        mocker.patch.object(view, 'get_object', return_value=host)
-
-        resp = view.get(None)
-
-        assert resp.data['error'] == 'This host is not recognized as an Insights host.'
-        assert resp.status_code == 404
-
-    def test_get_no_credential(self, patch_parent, mocker):
-        view = HostInsights()
-
-        class MockInventory():
-            insights_credential = None
-            name = 'inventory_name_here'
-
-        class MockHost():
-            insights_system_id = 'insights_system_id_value'
-            inventory = MockInventory()
-
-        mocker.patch.object(view, 'get_object', return_value=MockHost())
-
-        resp = view.get(None)
-
-        assert resp.data['error'] == 'The Insights Credential for "inventory_name_here" was not found.'
-        assert resp.status_code == 404
 
 
 class TestSurveySpecValidation:
@@ -284,7 +191,7 @@ class TestSurveySpecValidation:
         new['spec'][0]['default'] = '$encrypted$'
         new['spec'][0]['required'] = False
         resp = view._validate_spec_data(new, old)
-        assert resp is None
+        assert resp is None, resp.data
         assert new == {
             "name": "old survey",
             "description": "foobar",
@@ -348,3 +255,66 @@ class TestSurveySpecValidation:
                 }
             ]
         }
+
+
+    @staticmethod
+    def spec_from_element(survey_item):
+        survey_item.setdefault('name', 'foo')
+        survey_item.setdefault('variable', 'foo')
+        survey_item.setdefault('required', False)
+        survey_item.setdefault('question_name', 'foo')
+        survey_item.setdefault('type', 'text')
+        spec = {
+            'name': 'test survey',
+            'description': 'foo',
+            'spec': [survey_item]
+        }
+        return spec
+
+
+    @pytest.mark.parametrize("survey_item, error_text", [
+        ({'type': 'password', 'default': ['some', 'invalid', 'list']}, 'expected to be string'),
+        ({'type': 'password', 'default': False}, 'expected to be string'),
+        ({'type': 'integer', 'default': 'foo'}, 'expected to be int'),
+        ({'type': 'integer', 'default': u'🐉'}, 'expected to be int'),
+        ({'type': 'foo'}, 'allowed question types'),
+        ({'type': u'🐉'}, 'allowed question types'),
+        ({'type': 'multiplechoice'}, 'multiplechoice must specify choices'),
+        ({'type': 'integer', 'min': 'foo'}, 'min limit in survey question 0 expected to be integer'),
+        ({'question_name': 42}, "'question_name' in survey question 0 expected to be string.")
+    ])
+    def test_survey_question_element_validation(self, survey_item, error_text):
+        spec = self.spec_from_element(survey_item)
+        r = JobTemplateSurveySpec._validate_spec_data(spec, {})
+        assert r is not None, (spec, error_text)
+        assert 'error' in r.data
+        assert error_text in r.data['error']
+
+
+    def test_survey_spec_non_dict_error(self):
+        spec = self.spec_from_element({})
+        spec['spec'][0] = 'foo'
+        r = JobTemplateSurveySpec._validate_spec_data(spec, {})
+        assert 'Survey question 0 is not a json object' in r.data['error']
+
+
+    def test_survey_spec_dual_names_error(self):
+        spec = self.spec_from_element({})
+        spec['spec'].append(spec['spec'][0].copy())
+        r = JobTemplateSurveySpec._validate_spec_data(spec, {})
+        assert "'variable' 'foo' duplicated in survey question 1." in r.data['error']
+
+
+    def test_survey_spec_element_missing_property(self):
+        spec = self.spec_from_element({})
+        spec['spec'][0].pop('type')
+        r = JobTemplateSurveySpec._validate_spec_data(spec, {})
+        assert "'type' missing from survey question 0" in r.data['error']
+
+
+    @pytest.mark.parametrize('_type', ['integer', 'float'])
+    def test_survey_spec_element_number_empty_default(self, _type):
+        """ Assert that empty default is allowed for answer. """
+        spec = self.spec_from_element({'type': _type, 'default': ''})
+        r = JobTemplateSurveySpec._validate_spec_data(spec, {})
+        assert r is None

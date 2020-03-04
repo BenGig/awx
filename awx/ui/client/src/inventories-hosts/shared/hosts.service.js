@@ -17,9 +17,9 @@
             url: function(){
                 return '';
             },
-            error: function(data, status) {
-                ProcessErrors($rootScope, data.data, status, null, { hdr: 'Error!',
-                msg: 'Call to ' + this.url + '. GET returned: ' + status });
+            error: function(data) {
+                ProcessErrors($rootScope, data.data, data.status, null, { hdr: 'Error!',
+                msg: 'Call to ' + this.url + '. GET returned: ' + data.status });
             },
             success: function(data){
                 return data;
@@ -30,6 +30,15 @@
                 this.url = GetBasePath('hosts') + '?' + this.stringifyParams(params);
                 Rest.setUrl(this.url);
                 return Rest.get()
+                    .then(this.success.bind(this))
+                    .catch(this.error.bind(this))
+                    .finally(Wait('stop'));
+            },
+            patch: function(id, data){
+                Wait('start');
+                this.url = GetBasePath('hosts') + id;
+                Rest.setUrl(this.url);
+                return Rest.patch(data)
                     .then(this.success.bind(this))
                     .catch(this.error.bind(this))
                     .finally(Wait('stop'));

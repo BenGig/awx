@@ -21,17 +21,17 @@ export default ['i18n', function(i18n) {
             name: {
                 key: true,
                 label: i18n._('Name'),
-                columnClass: 'col-lg-3 col-md-4 col-sm-9 col-xs-9',
+                columnClass: 'col-md-4 col-sm-9 col-xs-9',
                 modalColumnClass: 'col-md-8',
                 awToolTip: '{{team.description | sanitize}}',
                 dataPlacement: 'top'
             },
             organization: {
                 label: i18n._('Organization'),
-                ngBind: 'team.organization_name',
+                ngBind: 'team.summary_fields.organization.name',
                 sourceModel: 'organization',
                 sourceField: 'name',
-                columnClass: 'col-md-3 hidden-sm hidden-xs',
+                columnClass: 'd-none d-md-flex col-md-4',
                 excludeModal: true
             }
         },
@@ -41,15 +41,15 @@ export default ['i18n', function(i18n) {
                 mode: 'all', // One of: edit, select, all
                 ngClick: 'addTeam()',
                 awToolTip: i18n._('Create a new team'),
-                actionClass: 'btn List-buttonSubmit',
-                buttonContent: '&#43; ' + i18n._('ADD'),
-                ngShow: 'canAdd'
+                actionClass: 'at-Button--add',
+                actionId: 'button-add',
+                ngShow: 'canAdd && canEdit'
             }
         },
 
         fieldActions: {
 
-            columnClass: 'col-lg-3 col-md-2 col-sm-3 col-xs-3',
+            columnClass: 'col-md-4 col-sm-3 col-xs-3',
 
             edit: {
                 label: i18n._('Edit'),

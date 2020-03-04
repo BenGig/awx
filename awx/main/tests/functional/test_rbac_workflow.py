@@ -7,7 +7,9 @@ from awx.main.access import (
     # WorkflowJobNodeAccess
 )
 
-from awx.main.models import InventorySource
+from rest_framework.exceptions import PermissionDenied
+
+from awx.main.models import InventorySource, JobLaunchConfig
 
 
 @pytest.fixture
@@ -134,6 +136,45 @@ class TestWorkflowJobAccess:
         wfjt.admin_role.members.add(rando)
         access = WorkflowJobAccess(rando)
         assert access.can_cancel(workflow_job)
+
+    def test_execute_role_relaunch(self, wfjt, workflow_job, rando):
+        wfjt.execute_role.members.add(rando)
+        JobLaunchConfig.objects.create(job=workflow_job)
+        assert WorkflowJobAccess(rando).can_start(workflow_job)
+
+    def test_can_start_with_limits(self, workflow_job, inventory, admin_user):
+        inventory.organization.max_hosts = 1
+        inventory.organization.save()
+        inventory.hosts.create(name="Existing host 1")
+        inventory.hosts.create(name="Existing host 2")
+        workflow_job.inventory = inventory
+        workflow_job.save()
+
+        assert WorkflowJobAccess(admin_user).can_start(workflow_job)
+
+    def test_cannot_relaunch_friends_job(self, wfjt, rando, alice):
+        workflow_job = wfjt.workflow_jobs.create(name='foo', created_by=alice)
+        JobLaunchConfig.objects.create(
+            job=workflow_job,
+            extra_data={'foo': 'fooforyou'}
+        )
+        wfjt.execute_role.members.add(alice)
+        assert not WorkflowJobAccess(rando).can_start(workflow_job)
+
+    def test_relaunch_inventory_access(self, workflow_job, inventory, rando):
+        wfjt = workflow_job.workflow_job_template
+        wfjt.execute_role.members.add(rando)
+        assert rando in wfjt.execute_role
+        workflow_job.created_by = rando
+        workflow_job.inventory = inventory
+        workflow_job.save()
+        wfjt.ask_inventory_on_launch = True
+        wfjt.save()
+        JobLaunchConfig.objects.create(job=workflow_job, inventory=inventory)
+        with pytest.raises(PermissionDenied):
+            WorkflowJobAccess(rando).can_start(workflow_job)
+        inventory.use_role.members.add(rando)
+        assert WorkflowJobAccess(rando).can_start(workflow_job)
 
 
 @pytest.mark.django_db

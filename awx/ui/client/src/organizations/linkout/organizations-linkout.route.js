@@ -4,15 +4,16 @@
  * All Rights Reserved
  *************************************************/
 
+import OrganizationsJobTemplatesRoute from '~features/templates/routes/organizationsTemplatesList.route';
+
 import OrganizationsAdmins from './controllers/organizations-admins.controller';
 import OrganizationsInventories from './controllers/organizations-inventories.controller';
-import OrganizationsJobTemplates from './controllers/organizations-job-templates.controller';
 import OrganizationsProjects from './controllers/organizations-projects.controller';
 import OrganizationsTeams from './controllers/organizations-teams.controller';
 import OrganizationsUsers from './controllers/organizations-users.controller';
 import { N_ } from '../../i18n';
 
-export default [{
+let lists = [{
     name: 'organizations.users',
     url: '/:organization_id/users',
     searchPrefix: 'user',
@@ -47,24 +48,21 @@ export default [{
         activityStreamTarget: 'organization'
     },
     resolve: {
-        features: ['FeaturesService', function(FeaturesService) {
-            return FeaturesService.get();
-        }],
         OrgUsersDataset: ['OrgUserList', 'QuerySet', '$stateParams', 'GetBasePath',
             function(list, qs, $stateParams, GetBasePath) {
                 let path = GetBasePath(list.basePath) || list.basePath;
-                return qs.search(path, $stateParams.user_search);
+                return qs.search(path, $stateParams.org_user_search);
             }
         ],
-        OrgUserList: ['UserList', 'GetBasePath', '$stateParams', function(UserList, GetBasePath, $stateParams) {
+        OrgUserList: ['UserList', 'GetBasePath', '$stateParams', 'i18n', function(UserList, GetBasePath, $stateParams, i18n) {
             let list = _.cloneDeep(UserList);
             delete list.actions.add;
             list.basePath = `${GetBasePath('organizations')}${$stateParams.organization_id}/users`;
             list.searchRowActions = {
                 add: {
-                    buttonContent: '&#43; ADD user',
-                    awToolTip: 'Add existing user to organization',
-                    actionClass: 'btn List-buttonSubmit',
+                    awToolTip: i18n._('Add existing user to organization'),
+                    actionClass: 'at-Button--add',
+                    actionId: 'button-add',
                     ngClick: 'addUsers()'
                 }
             };
@@ -97,17 +95,14 @@ export default [{
         label: N_("TEAMS")
     },
     resolve: {
-        features: ['FeaturesService', function(FeaturesService) {
-            return FeaturesService.get();
-        }],
-        OrgTeamList: ['TeamList', 'GetBasePath', '$stateParams', function(TeamList, GetBasePath, $stateParams) {
+        OrgTeamList: ['TeamList', 'GetBasePath', '$stateParams', 'i18n', function(TeamList, GetBasePath, $stateParams, i18n) {
             let list = _.cloneDeep(TeamList);
             delete list.actions.add;
             // @issue Why is the delete action unavailable in this view?
             delete list.fieldActions.delete;
-            list.listTitle = N_('Teams') + ` | {{ name }}`;
+            list.listTitle = i18n._('Teams') + ` | {{ name }}`;
             list.basePath = `${GetBasePath('organizations')}${$stateParams.organization_id}/teams`;
-            list.emptyListText = "This list is populated by teams added from the&nbsp;<a ui-sref='teams.add'>Teams</a>&nbsp;section";
+            list.emptyListText = `${i18n._('This list is populated by teams added from the')}&nbsp;<a ui-sref='teams.add'>${N_('Teams')}</a>&nbsp;${N_('section')}`;
             return list;
         }],
         OrgTeamsDataset: ['OrgTeamList', 'QuerySet', '$stateParams', 'GetBasePath',
@@ -143,18 +138,15 @@ export default [{
         label: N_("INVENTORIES")
     },
     resolve: {
-        features: ['FeaturesService', function(FeaturesService) {
-            return FeaturesService.get();
-        }],
-        OrgInventoryList: ['InventoryList', 'GetBasePath', '$stateParams', function(InventoryList, GetBasePath, $stateParams) {
+        OrgInventoryList: ['InventoryList', 'GetBasePath', '$stateParams', 'i18n', function(InventoryList, GetBasePath, $stateParams, i18n) {
             let list = _.cloneDeep(InventoryList);
             delete list.actions.add;
             // @issue Why is the delete action unavailable in this view?
             delete list.fieldActions.delete;
             list.title = true;
-            list.listTitle = N_('Inventories') + ` | {{ name }}`;
+            list.listTitle = i18n._('Inventories') + ` | {{ name }}`;
             list.basePath = `${GetBasePath('organizations')}${$stateParams.organization_id}/inventories`;
-            list.emptyListText = "This list is populated by inventories added from the&nbsp;<a ui-sref='inventories.add'>Inventories</a>&nbsp;section";
+            list.emptyListText = `${i18n._("This list is populated by inventories added from the")}&nbsp;<a ui-sref='inventories.add'>${N_("Inventories")}</a>&nbsp;${N_("section")}`;
             return list;
         }],
         OrgInventoryDataset: ['OrgInventoryList', 'QuerySet', '$stateParams', 'GetBasePath',
@@ -183,108 +175,27 @@ export default [{
     },
     data: {
         activityStream: true,
-        activityStreamTarget: 'organization',
-        socket: {
-            "groups": {
-                "jobs": ["status_changed"]
-            }
-        },
+        activityStreamTarget: 'organization'
     },
     ncyBreadcrumb: {
         parent: "organizations.edit",
         label: N_("PROJECTS")
     },
     resolve: {
-        features: ['FeaturesService', function(FeaturesService) {
-            return FeaturesService.get();
-        }],
-        OrgProjectList: ['ProjectList', 'GetBasePath', '$stateParams', function(ProjectList, GetBasePath, $stateParams) {
+        OrgProjectList: ['ProjectList', 'GetBasePath', '$stateParams', 'i18n', function(ProjectList, GetBasePath, $stateParams, i18n) {
             let list = _.cloneDeep(ProjectList);
             delete list.actions;
             // @issue Why is the delete action unavailable in this view?
             delete list.fieldActions.delete;
-            list.listTitle = N_('Projects') + ` | {{ name }}`;
+            list.listTitle = i18n._('Projects') + ` | {{ name }}`;
             list.basePath = `${GetBasePath('organizations')}${$stateParams.organization_id}/projects`;
-            list.emptyListText = "This list is populated by projects added from the&nbsp;<a ui-sref='projects.add'>Projects</a>&nbsp;section";
+            list.emptyListText = `${i18n._("This list is populated by projects added from the")}&nbsp;<a ui-sref='projects.add'>${N_("Projects")}</a>&nbsp;${N_("section")}`;
             return list;
         }],
         OrgProjectDataset: ['OrgProjectList', 'QuerySet', '$stateParams', 'GetBasePath',
             function(list, qs, $stateParams, GetBasePath) {
                 let path = GetBasePath(list.basePath) || list.basePath;
                 return qs.search(path, $stateParams.project_search);
-            }
-        ]
-    }
-}, {
-    name: 'organizations.job_templates',
-    url: '/:organization_id/job_templates',
-    searchPrefix: 'job_template',
-    views: {
-        'form': {
-            controller: OrganizationsJobTemplates,
-            templateProvider: function(OrgJobTemplateList, generateList) {
-                let html = generateList.build({
-                    list: OrgJobTemplateList,
-                    mode: 'edit',
-                    cancelButton: true
-                });
-                return generateList.wrapPanel(html);
-            },
-        },
-    },
-    params: {
-        template_search: {
-            value: {
-                or__project__organization: null,
-                or__inventory__organization: null,
-                page_size: 20
-            },
-            dynamic: true
-        }
-    },
-    data: {
-        activityStream: true,
-        activityStreamTarget: 'organization',
-        socket: {
-            "groups": {
-                "jobs": ["status_changed"]
-            }
-        }
-    },
-    ncyBreadcrumb: {
-        parent: "organizations.edit",
-        label: N_("JOB TEMPLATES")
-    },
-    resolve: {
-        features: ['FeaturesService', function(FeaturesService) {
-            return FeaturesService.get();
-        }],
-        OrgJobTemplateList: ['TemplateList', 'GetBasePath', '$stateParams', function(TemplateList) {
-            let list = _.cloneDeep(TemplateList);
-            delete list.actions;
-            // @issue Why is the delete action unavailable in this view?
-            delete list.fieldActions.delete;
-            delete list.fields.type;
-            list.listTitle = N_('Job Templates') + ` | {{ name }}`;
-            list.emptyListText = "This list is populated by job templates added from the&nbsp;<a ui-sref='templates.addJobTemplate'>Job Templates</a>&nbsp;section";
-            list.iterator = 'template';
-            list.name = 'job_templates';
-            list.basePath = "job_templates";
-            list.fields.smart_status.ngInclude = "'/static/partials/organizations-job-template-smart-status.html'";
-            list.fields.name.ngHref = '#/templates/job_template/{{template.id}}';
-            list.fieldActions.submit.ngClick = 'submitJob(template.id)';
-            list.fieldActions.schedule.ngClick = 'scheduleJob(template.id)';
-            list.fieldActions.copy.ngClick = 'copyTemplate(template.id)';
-            list.fieldActions.edit.ngClick = "editJobTemplate(template.id)";
-            list.fieldActions.view.ngClick = "editJobTemplate(template.id)";
-            return list;
-        }],
-        OrgJobTemplateDataset: ['OrgJobTemplateList', 'QuerySet', '$stateParams', 'GetBasePath',
-            function(list, qs, $stateParams, GetBasePath) {
-                let path = GetBasePath(list.name);
-                $stateParams.template_search.or__project__organization = $stateParams.organization_id;
-                $stateParams.template_search.or__inventory__organization = $stateParams.organization_id;
-                return qs.search(path, $stateParams.template_search);
             }
         ]
     }
@@ -330,29 +241,30 @@ export default [{
         label: N_("ADMINS")
     },
     resolve: {
-        features: ['FeaturesService', function(FeaturesService) {
-            return FeaturesService.get();
-        }],
         OrgAdminsDataset: ['OrgAdminList', 'QuerySet', '$stateParams', 'GetBasePath',
             function(list, qs, $stateParams, GetBasePath) {
                 let path = GetBasePath(list.basePath) || list.basePath;
                 return qs.search(path, $stateParams[`user_search`]);
             }
         ],
-        OrgAdminList: ['UserList', 'GetBasePath', '$stateParams', function(UserList, GetBasePath, $stateParams) {
+        OrgAdminList: ['UserList', 'GetBasePath', '$stateParams', 'i18n', function(UserList, GetBasePath, $stateParams, i18n) {
             let list = _.cloneDeep(UserList);
             delete list.actions.add;
             list.basePath = `${GetBasePath('organizations')}${$stateParams.organization_id}/admins`;
             list.searchRowActions = {
                 add: {
-                    buttonContent: '&#43; ADD administrator',
-                    awToolTip: 'Add existing user to organization as administrator',
-                    actionClass: 'btn List-buttonSubmit',
-                    ngClick: 'addUsers()'
+                    awToolTip: i18n._('Add existing user to organization as administrator'),
+                    actionClass: 'at-Button--add',
+                    ngClick: 'addUsers()',
+                    ngShow:'canAddAdmins'
                 }
             };
-            list.listTitle = N_('Admins') + ` | {{ name }}`;
+            list.listTitle = i18n._('Admins') + ` | {{ name }}`;
             return list;
         }]
     }
 }];
+
+lists.push(OrganizationsJobTemplatesRoute);
+
+export default lists;
